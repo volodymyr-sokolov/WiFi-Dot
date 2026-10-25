@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same fan as ic_stat_ok with a "!" cut out in the middle (reverse winding = hole) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M12.01,21.49L23.64,7c-0.45,-0.34 -4.93,-4 -11.64,-4C5.28,3 0.81,6.66 0.36,7l11.63,14.49 0.01,0.01 0.01,-0.01zM10.8,6.8H13.2V14.4H10.8zM10.8,15.9H13.2V18.3H10.8z" />
+</vector>

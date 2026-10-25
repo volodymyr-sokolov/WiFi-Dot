@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget picker preview: looks like the widget itself (dark rounded tile + green fan) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="72dp" android:height="72dp" android:viewportWidth="72" android:viewportHeight="72">
+    <path android:fillColor="#99000000"
+        android:pathData="M14,0H58A14,14 0,0 1,72 14V58A14,14 0,0 1,58 72H14A14,14 0,0 1,0 58V14A14,14 0,0 1,14 0z" />
+    <group android:translateX="18" android:translateY="13" android:scaleX="1.5" android:scaleY="1.5">
+        <path android:fillColor="#FF2ECC40" android:pathData="M12.01,21.49L23.64,7c-0.45,-0.34 -4.93,-4 -11.64,-4C5.28,3 0.81,6.66 0.36,7l11.63,14.49 0.01,0.01 0.01,-0.01z" />
+    </group>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M27,53h18v3H27z" />
+</vector>
