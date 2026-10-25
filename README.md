@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v1.6)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v1.7)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -55,4 +55,5 @@ sudo apt install android-sdk-platform-23 aapt apksigner zipalign dalvik-exchange
 ```
 
 `build.sh` runs `aapt → javac → dx → zipalign → apksigner`. Newer APIs (Quick Settings tile, notification channels, pinning widgets and tiles) are compiled against the small stubs in `stubs/` and called with version checks or reflection.
+Icons are generated from one shape by `tools/make_icons.py`.
 A signing key `wifidot.keystore` is generated on the first build and is not committed.
