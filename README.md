@@ -1,6 +1,11 @@
 # WiFi Dot
 
 A tiny Android app that shows whether your **Wi-Fi actually has internet** — not just whether you are connected.
+Built with Starlink in mind: one tap opens the dish status page.
+
+![Icons](docs/icons.png)
+
+**[Download the latest APK](https://github.com/volodymyr-sokolov/wifi-dot/releases/latest)**
 
 | Icon | Meaning |
 |------|---------|
