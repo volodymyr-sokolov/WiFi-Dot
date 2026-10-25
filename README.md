@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download the latest APK](https://github.com/volodymyr-sokolov/wifi-dot/releases/latest)**
+**[Download WiFiDot.apk (v1.5)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)** — open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
