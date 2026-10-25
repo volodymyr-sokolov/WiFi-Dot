@@ -106,11 +106,27 @@ public final class Checker {
                 || !label.equals(p.getString("label", ""))
                 || !url.equals(p.getString("url", ""));
         p.edit().putString("state", state).putString("label", label).putString("url", url)
-                .putString("gw", gw).putLong("time", System.currentTimeMillis()).apply();
+                .putString("gw", gw).putLong("latency", "online".equals(state) ? lastLatencyMs : -1)
+                .putLong("time", System.currentTimeMillis()).apply();
         if (changed || !p.getBoolean("rendered", false)) {
             p.edit().putBoolean("rendered", true).apply();
             render(ctx);
         }
+        // Without the foreground monitor, keep checking with light alarms while on Wi-Fi.
+        if (wifi == null) Poller.cancel(ctx);
+        else if (!MonitorService.running) Poller.schedule(ctx);
+    }
+
+    /** Quick, no-network check: is any Wi-Fi network connected right now? */
+    static boolean wifiPresent(Context ctx) {
+        try {
+            return findWifi((ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE)) != null;
+        } catch (Throwable e) { return true; }
+    }
+
+    /** The Wi-Fi Network object (for the speed test), or null. */
+    static Network wifiNetwork(Context ctx) {
+        return findWifi((ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE));
     }
 
     // ---------- Wi-Fi ----------
@@ -150,7 +166,10 @@ public final class Checker {
 
     // ---------- Internet ----------
 
+    static volatile long lastLatencyMs = -1;
+
     private static boolean hasInternet(Network wifi) {
+        lastLatencyMs = -1;
         String[] urls = {
                 "http://connectivitycheck.gstatic.com/generate_204",
                 "http://cp.cloudflare.com/generate_204",
@@ -163,8 +182,12 @@ public final class Checker {
                 c.setReadTimeout(3000);
                 c.setInstanceFollowRedirects(false);
                 c.setUseCaches(false);
+                long t0 = System.nanoTime();
                 // 204 = internet OK; 200/302 usually means a captive portal
-                if (c.getResponseCode() == 204) return true;
+                if (c.getResponseCode() == 204) {
+                    lastLatencyMs = (System.nanoTime() - t0) / 1_000_000L;
+                    return true;
+                }
             } catch (Throwable ignored) {
             } finally {
                 if (c != null) c.disconnect();
@@ -295,14 +318,16 @@ public final class Checker {
         rv.setInt(R.id.wifi, "setColorFilter", colorFor(state));
         rv.setTextViewText(R.id.label, label);
 
-        Intent open = new Intent(ctx, OpenActivity.class);
-        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        PendingIntent pi = PendingIntent.getActivity(ctx, 0, open,
+        Intent menu = new Intent(ctx, MenuActivity.class);
+        menu.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        PendingIntent pi = PendingIntent.getActivity(ctx, 2, menu,
                 PendingIntent.FLAG_UPDATE_CURRENT | FLAG_IMMUTABLE);
         rv.setOnClickPendingIntent(R.id.root, pi);
 
-        AppWidgetManager m = AppWidgetManager.getInstance(ctx);
-        m.updateAppWidget(new ComponentName(ctx, WifiDotWidget.class), rv);
+        try {
+            AppWidgetManager m = AppWidgetManager.getInstance(ctx);
+            m.updateAppWidget(new ComponentName(ctx, WifiDotWidget.class), rv);
+        } catch (Throwable ignored) {} // widget turned off
 
         try { StatusNotifier.update(ctx); } catch (Throwable ignored) {}
         WifiTileService.requestUpdate(ctx);
@@ -319,8 +344,8 @@ public final class Checker {
 
     static int colorFor(String state) {
         if ("online".equals(state)) return GREEN;
-        if ("offline".equals(state) || "nowifi".equals(state)) return RED;
-        return GREY;
+        if ("offline".equals(state)) return RED;
+        return GREY; // Wi-Fi off / unknown
     }
 
     /** Network-change subscription — the system wakes NetReceiver on every Wi-Fi change. */

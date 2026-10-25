@@ -1,6 +1,10 @@
 package com.wifidot.widget;
 
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.appwidget.AppWidgetManager;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
@@ -8,11 +12,15 @@ import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.Icon;
 import android.graphics.drawable.RippleDrawable;
 import android.net.Uri;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -25,16 +33,20 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.Executor;
 
-/** Main screen: live status, settings, icon legend and a short how-to. */
+/** Main screen: live status, connection speed, where the status is shown, settings, icon legend. */
 public class MainActivity extends Activity implements SharedPreferences.OnSharedPreferenceChangeListener {
     private static final String POST_NOTIF = "android.permission.POST_NOTIFICATIONS";
     private static final String LOCATION = "android.permission.ACCESS_FINE_LOCATION";
 
-    // palette (set in onCreate for light / dark)
-    private int cBg, cCard, cText, cSub, cIcon, cRipple, cPill;
+    private int cBg, cCard, cText, cSub, cIcon, cRipple, cPill, cLine;
     private float dp;
 
     private SharedPreferences prefs;
@@ -42,12 +54,15 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     private ImageView statusIcon;
     private TextView statusTitle, statusSub, statusTime;
-    private Switch notifSwitch, starlinkSwitch;
-    private TextView starlinkSub, locationSub;
+    private TextView linkValue, latencyValue, downloadValue, testLabel;
+    private Switch swIcon, swAlerts, swWidget, swTile, swStarlink;
+    private TextView starlinkSub, locationSub, batterySub;
+    private View addWidget, addTile;
     private boolean binding;
+    private SpeedTest test;
 
     private final Runnable ticker = new Runnable() {
-        public void run() { updateTime(); handler.postDelayed(this, 1000); }
+        public void run() { updateTime(); updateLink(); handler.postDelayed(this, 1000); }
     };
 
     @Override
@@ -59,10 +74,10 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                 == Configuration.UI_MODE_NIGHT_YES;
         if (night) {
             cBg = 0xFF101418; cCard = 0xFF1C2228; cText = 0xFFECEFF1; cSub = 0xFF9AA4AE;
-            cIcon = 0xFFB0BAC4; cRipple = 0x33FFFFFF; cPill = 0xFF2A3239;
+            cIcon = 0xFFB0BAC4; cRipple = 0x33FFFFFF; cPill = 0xFF2A3239; cLine = 0x1FFFFFFF;
         } else {
             cBg = 0xFFF2F4F7; cCard = 0xFFFFFFFF; cText = 0xFF14191E; cSub = 0xFF66707A;
-            cIcon = 0xFF55606B; cRipple = 0x22000000; cPill = 0xFFEDF0F3;
+            cIcon = 0xFF55606B; cRipple = 0x22000000; cPill = 0xFFEDF0F3; cLine = 0x14000000;
         }
         getWindow().setBackgroundDrawable(new ColorDrawable(cBg));
         setContentView(buildUi());
@@ -90,6 +105,12 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     }
 
     @Override
+    protected void onDestroy() {
+        if (test != null) test.cancel();
+        super.onDestroy();
+    }
+
+    @Override
     public void onSharedPreferenceChanged(SharedPreferences sp, String key) {
         handler.post(new Runnable() { public void run() { refresh(); } });
     }
@@ -97,23 +118,19 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     // ---------------------------------------------------------------- UI
 
     private View buildUi() {
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout col = vbox();
         col.setPadding(px(16), px(20), px(16), px(28));
 
-        // Header
-        TextView title = text("WiFi Dot", 28, cText, true);
-        col.addView(title);
+        col.addView(text("WiFi Dot", 28, cText, true));
         TextView tagline = text("Wi-Fi internet monitor", 14, cSub, false);
         tagline.setPadding(0, px(2), 0, px(16));
         col.addView(tagline);
 
-        // Status card
-        LinearLayout status = card();
+        // ---- Status
+        LinearLayout status = card(true);
         LinearLayout top = hbox();
         top.setGravity(Gravity.CENTER_VERTICAL);
         statusIcon = new ImageView(this);
-        statusIcon.setImageResource(R.drawable.ic_stat_ok);
         top.addView(statusIcon, new LinearLayout.LayoutParams(px(56), px(56)));
         LinearLayout texts = vbox();
         texts.setPadding(px(16), 0, 0, 0);
@@ -128,47 +145,111 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
         LinearLayout pills = hbox();
         pills.setPadding(0, px(16), 0, 0);
-        View check = pill(R.drawable.ic_ui_refresh, "Check now", new View.OnClickListener() {
+        LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, -2, 1);
+        lp1.rightMargin = px(6);
+        LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, -2, 1);
+        lp2.leftMargin = px(6);
+        pills.addView(pill(R.drawable.ic_ui_refresh, "Check now", new View.OnClickListener() {
             public void onClick(View v) {
                 prefs.edit().putLong("detected2", 0).apply();
                 statusTitle.setText("Checking…");
                 Checker.runAsync(MainActivity.this, null);
             }
-        });
-        View open = pill(R.drawable.ic_ui_open, "Open router page", new View.OnClickListener() {
+        }), lp1);
+        pills.addView(pill(R.drawable.ic_ui_open, "Router page", new View.OnClickListener() {
             public void onClick(View v) { startActivity(new Intent(MainActivity.this, OpenActivity.class)); }
-        });
-        LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, -2, 1);
-        lp1.rightMargin = px(6);
-        LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, -2, 1);
-        lp2.leftMargin = px(6);
-        pills.addView(check, lp1);
-        pills.addView(open, lp2);
+        }), lp2);
         status.addView(pills);
         col.addView(status);
 
-        // Settings
-        col.addView(section("Settings"));
-        LinearLayout settings = card();
-        settings.setPadding(0, px(4), 0, px(4));
+        // ---- Connection speed
+        col.addView(section("Connection speed"));
+        LinearLayout speed = card(false);
+        linkValue = text("—", 13, cSub, false);
+        latencyValue = text("—", 13, cSub, false);
+        downloadValue = text("Not tested yet", 13, cSub, false);
+        speed.addView(row(R.drawable.ic_ui_link, "Wi-Fi link", linkValue, null, null));
+        speed.addView(divider());
+        speed.addView(row(R.drawable.ic_ui_timer, "Latency", latencyValue, null, null));
+        speed.addView(divider());
+        View testPill = smallPill("Test", new View.OnClickListener() {
+            public void onClick(View v) { toggleSpeedTest(); }
+        });
+        testLabel = (TextView) ((ViewGroup) testPill).getChildAt(0);
+        speed.addView(row(R.drawable.ic_ui_download, "Download", downloadValue, testPill, null));
+        col.addView(speed);
 
-        notifSwitch = new Switch(this);
-        settings.addView(row(R.drawable.ic_ui_bell, "Status bar icon",
-                text("Checks every 10 s, icon next to the clock", 13, cSub, false), notifSwitch, null));
-        notifSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+        // ---- Where the status is shown
+        col.addView(section("Show status in"));
+        LinearLayout show = card(false);
+
+        swIcon = new Switch(this);
+        show.addView(row(R.drawable.ic_stat_ok, "Status bar icon",
+                text("Next to the clock · checks every 10 s", 13, cSub, false), swIcon, null));
+        swIcon.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(CompoundButton v, boolean on) {
                 if (binding) return;
-                prefs.edit().putBoolean("notif", on).apply();
-                if (on) { askNotifPermission(); MonitorService.start(MainActivity.this); }
-                else { MonitorService.stop(MainActivity.this); StatusNotifier.cancel(MainActivity.this); }
+                Prefs.setStatusIcon(MainActivity.this, on);
+                if (on) askNotifPermission();
+                StatusNotifier.update(MainActivity.this);
+                Checker.runAsync(MainActivity.this, null);
             }
         });
 
-        starlinkSwitch = new Switch(this);
+        swAlerts = new Switch(this);
+        show.addView(divider());
+        show.addView(row(R.drawable.ic_ui_bell, "Pop-up alerts",
+                text("Only when the internet goes down or comes back", 13, cSub, false), swAlerts, null));
+        swAlerts.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton v, boolean on) {
+                if (binding) return;
+                Prefs.setAlerts(MainActivity.this, on);
+                if (on) askNotifPermission();
+            }
+        });
+
+        swWidget = new Switch(this);
+        addWidget = smallPill("Add", new View.OnClickListener() {
+            public void onClick(View v) { requestPinWidget(); }
+        });
+        show.addView(divider());
+        show.addView(row(R.drawable.ic_ui_widgets, "Home screen widget",
+                text("Long-press the home screen → Widgets → WiFi Dot", 13, cSub, false),
+                pair(addWidget, swWidget), null));
+        swWidget.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton v, boolean on) {
+                if (binding) return;
+                Prefs.setWidget(MainActivity.this, on);
+                if (on) { requestPinWidget(); Checker.render(MainActivity.this); }
+                refresh();
+            }
+        });
+
+        swTile = new Switch(this);
+        addTile = smallPill("Add", new View.OnClickListener() {
+            public void onClick(View v) { requestAddTile(); }
+        });
+        show.addView(divider());
+        show.addView(row(R.drawable.ic_ui_toggle, "Quick Settings tile",
+                text("Pull down the shade → ✎ Edit → drag “Wi-Fi Internet”", 13, cSub, false),
+                pair(addTile, swTile), null));
+        swTile.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton v, boolean on) {
+                if (binding) return;
+                Prefs.setTile(MainActivity.this, on);
+                if (on) requestAddTile();
+                refresh();
+            }
+        });
+        col.addView(show);
+
+        // ---- Settings
+        col.addView(section("Settings"));
+        LinearLayout settings = card(false);
+        swStarlink = new Switch(this);
         starlinkSub = text("", 13, cSub, false);
-        settings.addView(divider());
-        settings.addView(row(R.drawable.ic_ui_router, "This network is Starlink", starlinkSub, starlinkSwitch, null));
-        starlinkSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+        settings.addView(row(R.drawable.ic_ui_router, "This network is Starlink", starlinkSub, swStarlink, null));
+        swStarlink.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(CompoundButton v, boolean on) {
                 if (binding) return;
                 String gw = prefs.getString("gw", "");
@@ -190,36 +271,26 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                     }
                 }));
 
+        batterySub = text("", 13, cSub, false);
         settings.addView(divider());
-        settings.addView(row(R.drawable.ic_ui_battery, "Battery optimization",
-                text("Turn off for WiFi Dot so the icon stays", 13, cSub, false), chevron(),
+        settings.addView(row(R.drawable.ic_ui_battery, "Battery optimization", batterySub, chevron(),
                 new View.OnClickListener() {
-                    public void onClick(View v) { tryStart(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+                    public void onClick(View v) { requestBatteryExemption(); }
                 }));
         col.addView(settings);
 
-        // Icon legend
+        // ---- Icons
         col.addView(section("Icons"));
-        LinearLayout legend = card();
-        legend.setPadding(0, px(4), 0, px(4));
+        LinearLayout legend = card(false);
         legend.addView(legendRow(R.drawable.ic_stat_ok, Checker.GREEN, "Internet is available"));
         legend.addView(legendRow(R.drawable.ic_stat_bad, Checker.RED, "Wi-Fi connected, no internet"));
-        legend.addView(legendRow(R.drawable.ic_stat_off, Checker.RED, "Wi-Fi is off"));
+        legend.addView(legendRow(R.drawable.ic_stat_off, Checker.GREY, "Wi-Fi is off (widget only)"));
         col.addView(legend);
 
-        // How-to
-        col.addView(section("Where to find it"));
-        LinearLayout how = card();
-        how.setPadding(0, px(4), 0, px(4));
-        how.addView(row(R.drawable.ic_ui_widgets, "Home-screen widget",
-                text("Long-press home screen → Widgets → WiFi Dot", 13, cSub, false), null, null));
-        how.addView(divider());
-        how.addView(row(R.drawable.ic_ui_toggle, "Quick settings tile",
-                text("Pull down the shade → ✎ Edit → drag “Wi-Fi Internet”", 13, cSub, false), null, null));
-        how.addView(divider());
-        how.addView(row(R.drawable.ic_ui_open, "Tap any icon",
-                text("Opens the Starlink page (192.168.100.1) or your router’s page", 13, cSub, false), null, null));
-        col.addView(how);
+        TextView foot = text("Tap the widget for Details or the router page. The status bar icon and the "
+                + "tile open the router page — Starlink: 192.168.100.1.", 12, cSub, false);
+        foot.setPadding(px(6), px(14), px(6), 0);
+        col.addView(foot);
 
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(cBg);
@@ -237,33 +308,166 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         statusIcon.setColorFilter(Checker.colorFor(state));
         if ("online".equals(state)) statusTitle.setText("Internet OK");
         else if ("offline".equals(state)) statusTitle.setText("No internet");
-        else if ("nowifi".equals(state)) statusTitle.setText("Wi-Fi not connected");
+        else if ("nowifi".equals(state)) statusTitle.setText("Wi-Fi is off");
         else statusTitle.setText("Checking…");
         String host = url.replace("http://", "").replace("/", "");
         statusSub.setText("nowifi".equals(state) ? "Connect to a Wi-Fi network"
                 : (host.length() > 0 && !host.equals(label) ? label + " · " + host : label));
         updateTime();
 
+        long lat = prefs.getLong("latency", -1);
+        latencyValue.setText(lat >= 0 ? lat + " ms" : ("online".equals(state) ? "—" : "No internet"));
+        if (test == null) {
+            float dl = prefs.getFloat("dl_mbps", -1);
+            long t = prefs.getLong("dl_time", 0);
+            downloadValue.setText(dl < 0 ? "Not tested yet · uses ~30–100 MB"
+                    : fmtMbps(dl) + " · " + ago(t));
+        }
+        updateLink();
+
         binding = true;
-        notifSwitch.setChecked(StatusNotifier.enabled(this));
+        swIcon.setChecked(Prefs.statusIcon(this));
+        swAlerts.setChecked(Prefs.alerts(this));
+        swWidget.setChecked(Prefs.widget(this));
+        swTile.setChecked(Prefs.tile(this));
         boolean marked = Checker.markedStarlink(this, gw);
-        starlinkSwitch.setChecked(marked);
-        starlinkSwitch.setEnabled(gw.length() > 0);
+        swStarlink.setChecked(marked);
+        swStarlink.setEnabled(gw.length() > 0);
         binding = false;
+        addWidget.setVisibility(Prefs.widget(this) && canPinWidget() ? View.VISIBLE : View.GONE);
+        addTile.setVisibility(Prefs.tile(this) && Build.VERSION.SDK_INT >= 33 ? View.VISIBLE : View.GONE);
+
         starlinkSub.setText(gw.length() == 0 ? "Connect to Wi-Fi first"
                 : "Gateway " + gw + (marked ? " · opens 192.168.100.1" : " · use if not detected"));
         locationSub.setText(checkSelfPermission(LOCATION) == 0
                 ? "On · also needs Location turned on" : "Needs location access");
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        batterySub.setText(pm.isIgnoringBatteryOptimizations(getPackageName())
+                ? "Off for WiFi Dot ✓" : "Turn off so background checks keep running");
     }
 
     private void updateTime() {
         long t = prefs.getLong("time", 0);
-        if (t == 0) { statusTime.setText(""); return; }
-        long s = Math.max(0, (System.currentTimeMillis() - t) / 1000);
-        statusTime.setText(s < 60 ? "Checked " + s + " s ago" : "Checked " + (s / 60) + " min ago");
+        statusTime.setText(t == 0 ? "" : "Checked " + ago(t));
     }
 
-    // ---------------------------------------------------------------- helpers
+    @SuppressWarnings("deprecation")
+    private void updateLink() {
+        if ("nowifi".equals(prefs.getString("state", ""))) { linkValue.setText("Not connected"); return; }
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            WifiInfo wi = wm.getConnectionInfo();
+            if (wi == null || wi.getNetworkId() == -1 && wi.getLinkSpeed() <= 0) { linkValue.setText("—"); return; }
+            StringBuilder sb = new StringBuilder();
+            int rx = intCall(wi, "getRxLinkSpeedMbps"), tx = intCall(wi, "getTxLinkSpeedMbps");
+            if (rx > 0 && tx > 0) sb.append("↓ ").append(rx).append(" · ↑ ").append(tx).append(" Mbps");
+            else if (wi.getLinkSpeed() > 0) sb.append(wi.getLinkSpeed()).append(" Mbps");
+            int f = wi.getFrequency();
+            if (f > 0) sb.append(sb.length() > 0 ? " · " : "").append(f >= 5900 ? "6 GHz" : f >= 4900 ? "5 GHz" : "2.4 GHz");
+            int rssi = wi.getRssi();
+            if (rssi > -127 && rssi < 0) sb.append(" · ").append(rssi).append(" dBm");
+            linkValue.setText(sb.length() > 0 ? sb.toString() : "—");
+        } catch (Throwable e) {
+            linkValue.setText("—");
+        }
+    }
+
+    private static int intCall(Object o, String m) {
+        try { return (Integer) o.getClass().getMethod(m).invoke(o); } catch (Throwable e) { return -1; }
+    }
+
+    // ---------------------------------------------------------------- speed test
+
+    private void toggleSpeedTest() {
+        if (test != null) { test.cancel(); return; }
+        if (!"online".equals(prefs.getString("state", ""))) {
+            downloadValue.setText("Needs internet over Wi-Fi");
+            return;
+        }
+        test = new SpeedTest();
+        testLabel.setText("Stop");
+        downloadValue.setText("Testing…");
+        test.run(Checker.wifiNetwork(this), new SpeedTest.Listener() {
+            public void progress(final double mbps) {
+                handler.post(new Runnable() { public void run() {
+                    if (test != null) downloadValue.setText("Testing… " + fmtMbps(mbps));
+                } });
+            }
+            public void done(final double mbps, final boolean ok) {
+                handler.post(new Runnable() { public void run() {
+                    test = null;
+                    testLabel.setText("Test");
+                    if (ok) prefs.edit().putFloat("dl_mbps", (float) mbps)
+                            .putLong("dl_time", System.currentTimeMillis()).apply();
+                    else downloadValue.setText("Test failed — try again");
+                    if (ok) refresh();
+                } });
+            }
+        });
+    }
+
+    private static String fmtMbps(double m) {
+        return m >= 100 ? String.format(Locale.US, "%.0f Mbps", m) : String.format(Locale.US, "%.1f Mbps", m);
+    }
+
+    private static String ago(long t) {
+        long s = Math.max(0, (System.currentTimeMillis() - t) / 1000);
+        if (s < 60) return s + " s ago";
+        if (s < 3600) return (s / 60) + " min ago";
+        if (s < 86400) return (s / 3600) + " h ago";
+        return (s / 86400) + " d ago";
+    }
+
+    // ---------------------------------------------------------------- add widget / tile
+
+    private boolean canPinWidget() {
+        if (Build.VERSION.SDK_INT < 26) return false;
+        try {
+            AppWidgetManager m = AppWidgetManager.getInstance(this);
+            return (Boolean) m.getClass().getMethod("isRequestPinAppWidgetSupported").invoke(m);
+        } catch (Throwable e) { return false; }
+    }
+
+    private void requestPinWidget() {
+        if (!canPinWidget()) return;
+        try {
+            AppWidgetManager m = AppWidgetManager.getInstance(this);
+            m.getClass().getMethod("requestPinAppWidget", ComponentName.class, Bundle.class, PendingIntent.class)
+                    .invoke(m, new ComponentName(this, WifiDotWidget.class), null, null);
+        } catch (Throwable ignored) {}
+    }
+
+    private void requestAddTile() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        try {
+            Class<?> sbmClass = Class.forName("android.app.StatusBarManager");
+            Object sbm = Context.class.getMethod("getSystemService", Class.class).invoke(this, sbmClass);
+            Class<?> consumer = Class.forName("java.util.function.Consumer");
+            Object cb = Proxy.newProxyInstance(getClassLoader(), new Class<?>[]{consumer}, new InvocationHandler() {
+                public Object invoke(Object proxy, Method method, Object[] args) {
+                    if ("hashCode".equals(method.getName())) return System.identityHashCode(proxy);
+                    if ("equals".equals(method.getName())) return proxy == args[0];
+                    return null;
+                }
+            });
+            Executor ex = new Executor() { public void execute(Runnable r) { handler.post(r); } };
+            sbmClass.getMethod("requestAddTileService", ComponentName.class, CharSequence.class, Icon.class,
+                    Executor.class, consumer)
+                    .invoke(sbm, new ComponentName(this, WifiTileService.class), "Wi-Fi Internet",
+                            Icon.createWithResource(this, R.drawable.ic_stat_ok), ex, cb);
+        } catch (Throwable ignored) {}
+    }
+
+    private void requestBatteryExemption() {
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        Intent i = pm.isIgnoringBatteryOptimizations(getPackageName())
+                ? new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                : new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + getPackageName()));
+        try { startActivity(i); } catch (Throwable e) { openAppSettings(); }
+    }
+
+    // ---------------------------------------------------------------- view helpers
 
     private int px(float v) { return Math.round(v * dp); }
 
@@ -286,11 +490,13 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         return g;
     }
 
-    private LinearLayout card() {
+    private LinearLayout card(boolean padded) {
         LinearLayout c = vbox();
         c.setBackground(round(cCard, 20));
-        c.setPadding(px(18), px(18), px(18), px(18));
+        if (padded) c.setPadding(px(18), px(18), px(18), px(18));
+        else c.setPadding(0, px(4), 0, px(4));
         c.setElevation(px(1));
+        c.setClipToOutline(true);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.bottomMargin = px(4);
         c.setLayoutParams(lp);
@@ -298,7 +504,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     }
 
     private TextView section(String s) {
-        TextView t = text(s.toUpperCase(), 12, cSub, true);
+        TextView t = text(s.toUpperCase(Locale.US), 12, cSub, true);
         t.setLetterSpacing(0.08f);
         t.setPadding(px(6), px(20), 0, px(8));
         return t;
@@ -306,7 +512,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     private View divider() {
         View v = new View(this);
-        v.setBackgroundColor(cRipple);
+        v.setBackgroundColor(cLine);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, Math.max(1, px(0.7f)));
         lp.leftMargin = px(58);
         v.setLayoutParams(lp);
@@ -323,6 +529,16 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     private ImageView chevron() { return icon(R.drawable.ic_ui_chevron, cSub, 22); }
 
+    private View pair(View a, View b) {
+        LinearLayout l = hbox();
+        l.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.rightMargin = px(8);
+        l.addView(a, lp);
+        l.addView(b);
+        return l;
+    }
+
     private View row(int iconRes, String title, TextView sub, View end, View.OnClickListener click) {
         LinearLayout r = hbox();
         r.setGravity(Gravity.CENTER_VERTICAL);
@@ -333,12 +549,11 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         t.addView(text(title, 16, cText, false));
         if (sub != null) t.addView(sub);
         r.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
-        if (end != null) {
-            if (end.getParent() != null) ((ViewGroup) end.getParent()).removeView(end);
-            r.addView(end);
-        }
-        if (end instanceof Switch && click == null) {
-            final Switch sw = (Switch) end;
+        if (end != null) r.addView(end);
+        final Switch sw = end instanceof Switch ? (Switch) end
+                : end instanceof ViewGroup && ((ViewGroup) end).getChildCount() == 2
+                  && ((ViewGroup) end).getChildAt(1) instanceof Switch ? (Switch) ((ViewGroup) end).getChildAt(1) : null;
+        if (sw != null && click == null) {
             click = new View.OnClickListener() { public void onClick(View v) { if (sw.isEnabled()) sw.toggle(); } };
         }
         if (click != null) {
@@ -374,8 +589,14 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         return p;
     }
 
-    private void tryStart(Intent i) {
-        try { startActivity(i); } catch (Throwable e) { openAppSettings(); }
+    private View smallPill(String s, View.OnClickListener click) {
+        LinearLayout p = hbox();
+        p.setGravity(Gravity.CENTER);
+        p.setPadding(px(14), px(7), px(14), px(7));
+        p.setBackground(new RippleDrawable(ColorStateList.valueOf(cRipple), round(cPill, 16), null));
+        p.addView(text(s, 13, cText, true));
+        p.setOnClickListener(click);
+        return p;
     }
 
     private void openAppSettings() {

@@ -20,9 +20,5 @@ public class WifiDotWidget extends AppWidgetProvider {
         RefreshJob.schedule(ctx);
     }
 
-    @Override
-    public void onDisabled(Context ctx) {
-        Checker.unregisterNetworkCallback(ctx);
-        RefreshJob.cancel(ctx);
-    }
+    // onDisabled: nothing to stop — the status bar icon, pop-ups and tile keep working without the widget.
 }
