@@ -9,11 +9,11 @@ import android.os.SystemClock;
 
 /**
  * Light polling with inexact alarms, used when the foreground monitor is not running
- * (status-bar icon turned off, or Android refused to start it from the background).
+ * (no Wi-Fi/hotspot, status-bar icon turned off, or Android refused to start it).
  */
 final class Poller {
     static final String ACTION_POLL = "com.wifidot.widget.POLL";
-    private static final long SCREEN_ON = 30_000L, SCREEN_OFF = 5 * 60_000L;
+    private static final long SCREEN_ON = 20_000L, SCREEN_OFF = 5 * 60_000L;
 
     private Poller() {}
 

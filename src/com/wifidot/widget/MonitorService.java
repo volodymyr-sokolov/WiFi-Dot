@@ -95,7 +95,7 @@ public class MonitorService extends Service {
         running = false;
         synchronized (wake) { wake.notifyAll(); }
         try { unregisterReceiver(screen); } catch (Throwable ignored) {}
-        if (Checker.wifiPresent(this)) Poller.schedule(this);
+        Poller.schedule(this);
         super.onDestroy();
     }
 

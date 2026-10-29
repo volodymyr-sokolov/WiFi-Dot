@@ -173,14 +173,13 @@ final class Hotspot {
 
     // ------------------------------------------------------------------ subnet sweep
 
-    private static final int[] PORTS = {62078 /* iPhone/iPad */, 80};
+    private static final int[] PORTS = {62078 /* iPhone/iPad */, 80, 443, 445 /* Windows */};
 
     private static int sweep(InterfaceAddress ap) {
         try {
             byte[] own = ap.getAddress().getAddress();
-            final NetworkInterface ni = NetworkInterface.getByInetAddress(ap.getAddress());
             final AtomicInteger alive = new AtomicInteger();
-            ExecutorService ex = Executors.newFixedThreadPool(96);
+            ExecutorService ex = Executors.newFixedThreadPool(128);
             for (int last = 1; last <= 254; last++) {
                 if ((own[3] & 0xff) == last) continue;
                 final byte[] b = own.clone();
@@ -189,7 +188,7 @@ final class Hotspot {
                     public void run() {
                         try {
                             InetAddress host = InetAddress.getByAddress(b);
-                            if (host.isReachable(ni, 0, 500) || tcpAlive(host)) alive.incrementAndGet();
+                            if (host.isReachable(500) /* ICMP; binding to the interface needs root */ || tcpAlive(host)) alive.incrementAndGet();
                         } catch (Throwable ignored) {}
                     }
                 });

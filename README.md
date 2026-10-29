@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v1.8)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v1.9)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -38,8 +38,10 @@ Tapping it opens the hotspot settings. The app also checks whether the shared co
 
 Android doesn't give ordinary apps the hotspot client list, so the count is best effort:
 
-- **Older phones:** the app reads the system's neighbour table.
-- **Android 10+:** the app sweeps the hotspot subnet with ping and TCP every 30 s. A device with a strict firewall may not be counted.
+- **Where the phone allows it:** the app reads the system's neighbour table, which is exact.
+- **Otherwise:** the app sweeps the hotspot subnet with ping and TCP every 30 s. A device with a strict firewall may not be counted.
+
+Turning the hotspot on or off updates everything within seconds while the app is running in the background, or within about 20 s otherwise.
 
 ## Connection speed
 
@@ -73,4 +75,5 @@ sudo apt install android-sdk-platform-23 aapt apksigner zipalign dalvik-exchange
 
 `build.sh` runs `aapt → javac → dx → zipalign → apksigner`. Newer APIs (Quick Settings tile, notification channels, pinning widgets and tiles) are compiled against the small stubs in `stubs/` and called with version checks or reflection.
 Icons are generated from one shape by `tools/make_icons.py`.
+The app targets API 28 on purpose. That lets it restart its monitor from the background on Android 12+ and read the neighbour table for the hotspot device count.
 A signing key `wifidot.keystore` is generated on the first build and is not committed.

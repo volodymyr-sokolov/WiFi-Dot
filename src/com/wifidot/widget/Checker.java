@@ -67,6 +67,7 @@ public final class Checker {
     /** Check; redraws widget/icon/tile only if something changed. */
     static synchronized void checkNow(Context ctx) {
         registerNetworkCallback(ctx);
+        Events.register(ctx);
         ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
         Network wifi = findWifi(cm);
         SharedPreferences p = ctx.getSharedPreferences(PREFS, 0);
@@ -125,8 +126,8 @@ public final class Checker {
             render(ctx);
         }
         // Without the foreground monitor, keep checking with light alarms while on Wi-Fi.
-        if (wifi == null && !hotspot) Poller.cancel(ctx);
-        else if (!MonitorService.running) Poller.schedule(ctx);
+        // Keep a light poll going even without Wi-Fi: turning the hotspot on/off creates no network event.
+        if (!MonitorService.running) Poller.schedule(ctx);
     }
 
     /** Quick, no-network check: is Wi-Fi connected or the hotspot on right now? */
