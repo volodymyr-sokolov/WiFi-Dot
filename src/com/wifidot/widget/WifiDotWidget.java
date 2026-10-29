@@ -9,7 +9,6 @@ public class WifiDotWidget extends AppWidgetProvider {
     public void onUpdate(Context ctx, AppWidgetManager m, int[] ids) {
         Checker.render(ctx);
         RefreshJob.schedule(ctx);
-        MonitorService.start(ctx);
         final PendingResult pr = goAsync();
         Checker.runAsync(ctx, new Runnable() { public void run() { pr.finish(); } });
     }
@@ -20,5 +19,5 @@ public class WifiDotWidget extends AppWidgetProvider {
         RefreshJob.schedule(ctx);
     }
 
-    // onDisabled: nothing to stop — the status bar icon, pop-ups and tile keep working without the widget.
+    // onDisabled: nothing to stop — the tile keeps working without the widget.
 }

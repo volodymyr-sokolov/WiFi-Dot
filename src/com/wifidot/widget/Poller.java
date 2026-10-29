@@ -8,8 +8,8 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 
 /**
- * Light polling with inexact alarms, used when the foreground monitor is not running
- * (no Wi-Fi/hotspot, status-bar icon turned off, or Android refused to start it).
+ * Keeps the widget and tile fresh with light inexact alarms: every 20 s with the screen on,
+ * every 5 min with it off. Network/hotspot events (Events, NetReceiver) update sooner.
  */
 final class Poller {
     static final String ACTION_POLL = "com.wifidot.widget.POLL";

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates every WiFi Dot status icon from one shape, so they stay identical everywhere.
+"""Generates every WiFi Dot icon, so the shapes stay identical everywhere.
 
 The fan is a classic 90-degree Wi-Fi sector (same proportions as the system Wi-Fi icon),
 as large as possible inside the 24x24 square and centred both ways.
@@ -78,9 +78,7 @@ print("BANG", BANG)
 print("SLASH", SLASH)
 
 # ---------------------------------------------------------------------------
-# Hotspot icons: two pairs of arcs around the centre, with the number of
-# connected devices in the middle (dot = none/unknown, 1–9, "+" = 10 or more).
-# Shown in blue in the widget, the app and the tile; white next to the clock.
+# Hotspot icon: two pairs of arcs around a centre dot. Shown in blue.
 
 CX = CY = 12.0
 R_IN, R_OUT, ARC_W = 7.4, 11.0, 2.0
@@ -91,34 +89,9 @@ def arc_pair(r):
             f"M{CX + d:.2f},{CY - d:.2f}A{r},{r} 0 0 1 {CX + d:.2f},{CY + d:.2f}")
 
 ARCS = arc_pair(R_IN) + arc_pair(R_OUT)
-L, Rt, T, B, M = 9.7, 14.3, 7.9, 16.1, 12.0   # digit box (segment-style digits)
-DIGITS = {
-    "1": f"M10.5,9.3L12.4,{T}V{B}",
-    "2": f"M{L},{T}H{Rt}V{M}H{L}V{B}H{Rt}",
-    "3": f"M{L},{T}H{Rt}V{B}H{L}M10.6,{M}H{Rt}",
-    "4": f"M{L},{T}V{M}H{Rt}M{Rt},{T}V{B}",
-    "5": f"M{Rt},{T}H{L}V{M}H{Rt}V{B}H{L}",
-    "6": f"M{Rt},{T}H{L}V{B}H{Rt}V{M}H{L}",
-    "7": f"M{L},{T}H{Rt}L11.6,{B}",
-    "8": f"M{L},{T}H{Rt}V{B}H{L}ZM{L},{M}H{Rt}",
-    "9": f"M{Rt},{M}H{L}V{T}H{Rt}V{B}H{L}",
-    "plus": f"M{CX},9.0V15.0M9.0,{CY}H15.0",
-}
-
-def hs_icon(center):
-    arcs = (f'    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="{ARC_W}" '
-            f'android:strokeLineCap="round" android:pathData="{ARCS}" />')
-    return vector(arcs + "\n" + center)
-
-files = {"ic_hs_0.xml": hs_icon(
-    f'    <path android:fillColor="#FFFFFFFF" android:pathData="M{CX},{CY - 2.3}a2.3,2.3 0 1 1 0,4.6a2.3,2.3 0 1 1 0,-4.6z" />')}
-for k, d in DIGITS.items():
-    files[f"ic_hs_{k}.xml"] = hs_icon(
-        f'    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="1.9" android:strokeLineCap="round" '
-        f'android:strokeLineJoin="round" android:pathData="{d}" />')
-for name, xml in files.items():
-    with open(os.path.join(D, name), "w") as f:
-        f.write(xml)
+with open(os.path.join(D, "ic_hotspot.xml"), "w") as f:
+    f.write(vector(
+        f'    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="{ARC_W}" '
+        f'android:strokeLineCap="round" android:pathData="{ARCS}" />\n'
+        f'    <path android:fillColor="#FFFFFFFF" android:pathData="M{CX},{CY - 2.3}a2.3,2.3 0 1 1 0,4.6a2.3,2.3 0 1 1 0,-4.6z" />'))
 print("HS_ARCS", ARCS)
-for k, d in DIGITS.items():
-    print("HS_" + k, d)

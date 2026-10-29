@@ -4,21 +4,17 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
 
-/** User options: where the status is shown. All on by default. */
+/** User options: where the status is shown. Both on by default. */
 final class Prefs {
     private Prefs() {}
 
-    static boolean statusIcon(Context c) { return c.getSharedPreferences(Checker.PREFS, 0).getBoolean("notif", true); }
-    static boolean alerts(Context c) { return c.getSharedPreferences(Checker.PREFS, 0).getBoolean("alerts", true); }
     static boolean widget(Context c) { return componentOn(c, WifiDotWidget.class); }
     static boolean tile(Context c) { return componentOn(c, WifiTileService.class); }
 
-    static void setStatusIcon(Context c, boolean on) { c.getSharedPreferences(Checker.PREFS, 0).edit().putBoolean("notif", on).apply(); }
-    static void setAlerts(Context c, boolean on) { c.getSharedPreferences(Checker.PREFS, 0).edit().putBoolean("alerts", on).apply(); }
     static void setWidget(Context c, boolean on) { setComponent(c, WifiDotWidget.class, on); }
     static void setTile(Context c, boolean on) { setComponent(c, WifiTileService.class, on); }
 
-    static boolean anyOutputOn(Context c) { return statusIcon(c) || alerts(c) || widget(c) || tile(c); }
+    static boolean anyOutputOn(Context c) { return widget(c) || tile(c); }
 
     private static boolean componentOn(Context c, Class<?> cls) {
         int s = c.getPackageManager().getComponentEnabledSetting(new ComponentName(c, cls));

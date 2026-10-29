@@ -74,37 +74,15 @@ public final class Checker {
 
         String state, label, url, gw = "";
         boolean hotspot = Hotspot.isOn(ctx);
-        int hsCount = -1;
         String hsNet = "";
         if (hotspot) {
-            // Phone is sharing its connection: blue hotspot icon with the number of devices.
-            // The hotspot shares the phone's default connection (usually mobile data).
+            // The phone shares its default connection (usually mobile data): blue hotspot icon.
             Network up = cm.getActiveNetwork();
             if (up == null) up = wifi;
             NetworkCapabilities uc = up != null ? cm.getNetworkCapabilities(up) : null;
             boolean validated = uc != null && uc.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
-            boolean probe = up != null && hasInternet(up);
-            hsNet = probe || validated ? "online" : "offline";
-            Hotspot.noteUpstream(up == null ? "none" : (uc != null && uc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
-                    ? "mobile" : uc != null && uc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? "Wi-Fi" : "other")
-                    + ", validated " + (validated ? "yes" : "no") + ", probe " + (probe ? "OK" : "failed"));
-            int sys = HotspotNotifications.count(ctx);
-            String report;
-            if (sys >= 0) {
-                // Exact: from the system's own "N devices connected" hotspot notification.
-                hsCount = sys;
-                report = "Count: " + sys + " from the system hotspot notification ("
-                        + p.getString("hs_sys_source", "") + ")";
-            } else {
-                hsCount = Hotspot.countClients(ctx, wifi != null ? clientIp(cm, wifi) : null);
-                report = (HotspotNotifications.granted(ctx)
-                        ? "System notification: access on, listener "
-                            + (HotspotNotifications.connected ? "connected" : "not connected yet")
-                            + ", no device count found\n"
-                        : "System notification: Notification access is off\n") + Hotspot.report();
-            }
-            p.edit().putString("hs_report", report).apply();
-            state = "hotspot"; label = devicesText(hsCount); url = "";
+            hsNet = validated || (up != null && hasInternet(up)) ? "online" : "offline";
+            state = "hotspot"; label = "Hotspot"; url = "";
         } else if (wifi == null) {
             state = "nowifi"; label = "no Wi-Fi"; url = "";
         } else {
@@ -136,30 +114,19 @@ public final class Checker {
         }
 
         boolean changed = !state.equals(p.getString("state", ""))
-                || hsCount != p.getInt("hs_count", -1)
                 || !hsNet.equals(p.getString("hs_net", ""))
                 || !label.equals(p.getString("label", ""))
                 || !url.equals(p.getString("url", ""));
         p.edit().putString("state", state).putString("label", label).putString("url", url)
-                .putString("gw", gw).putInt("hs_count", hsCount).putString("hs_net", hsNet)
+                .putString("gw", gw).putString("hs_net", hsNet)
                 .putLong("latency", "online".equals(state) || "online".equals(hsNet) ? lastLatencyMs : -1)
                 .putLong("time", System.currentTimeMillis()).apply();
         if (changed || !p.getBoolean("rendered", false)) {
             p.edit().putBoolean("rendered", true).apply();
             render(ctx);
         }
-        // Without the foreground monitor, keep checking with light alarms while on Wi-Fi.
-        try { StatusNotifier.maybeAlert(ctx); } catch (Throwable ignored) {}
-        // Keep a light poll going even without Wi-Fi: turning the hotspot on/off creates no network event.
-        if (!MonitorService.running) Poller.schedule(ctx);
-    }
-
-    /** Quick, no-network check: is Wi-Fi connected or the hotspot on right now? */
-    static boolean wifiPresent(Context ctx) {
-        try {
-            return findWifi((ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE)) != null
-                    || Hotspot.isOn(ctx);
-        } catch (Throwable e) { return true; }
+        // Keep a light poll going, also without Wi-Fi: turning the hotspot on/off creates no network event.
+        Poller.schedule(ctx);
     }
 
     /** Network for the speed test: Wi-Fi, or the shared (mobile) connection when the hotspot is on. */
@@ -169,24 +136,10 @@ public final class Checker {
         return w != null ? w : cm.getActiveNetwork();
     }
 
-    private static String clientIp(ConnectivityManager cm, Network wifi) {
-        try {
-            for (android.net.LinkAddress la : cm.getLinkProperties(wifi).getLinkAddresses()) {
-                if (la.getAddress() instanceof Inet4Address) return la.getAddress().getHostAddress();
-            }
-        } catch (Throwable ignored) {}
-        return null;
-    }
-
     static boolean wifiClientConnected(Context ctx) {
         return findWifi((ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE)) != null;
     }
 
-    static String devicesText(int n) {
-        if (n < 0) return "Hotspot";
-        if (n == 0) return "No devices";
-        return n == 1 ? "1 device" : n + " devices";
-    }
 
     // ---------- Wi-Fi ----------
 
@@ -391,31 +344,17 @@ public final class Checker {
             m.updateAppWidget(new ComponentName(ctx, WifiDotWidget.class), rv);
         } catch (Throwable ignored) {} // widget turned off
 
-        try { StatusNotifier.update(ctx); } catch (Throwable ignored) {}
         WifiTileService.requestUpdate(ctx);
     }
 
     static final int GREEN = 0xFF2ECC40, RED = 0xFFFF3B30, GREY = 0xFF9E9E9E, BLUE = 0xFF2F80ED;
 
-    private static final int[] HS_ICONS = {
-            R.drawable.ic_hs_0, R.drawable.ic_hs_1, R.drawable.ic_hs_2, R.drawable.ic_hs_3, R.drawable.ic_hs_4,
-            R.drawable.ic_hs_5, R.drawable.ic_hs_6, R.drawable.ic_hs_7, R.drawable.ic_hs_8, R.drawable.ic_hs_9};
+    /** Icon for the saved status. */
+    static int iconFor(SharedPreferences p) { return iconFor(p.getString("state", "")); }
 
-    /** Hotspot icon with the device count in the middle (dot = none/unknown, "+" = 10 or more). */
-    static int hotspotIcon(int count) {
-        if (count >= HS_ICONS.length) return R.drawable.ic_hs_plus;
-        return count <= 0 ? R.drawable.ic_hs_0 : HS_ICONS[count];
-    }
-
-    /** Icon for the saved status (includes the hotspot device count). */
-    static int iconFor(SharedPreferences p) {
-        String state = p.getString("state", "");
-        if ("hotspot".equals(state)) return hotspotIcon(p.getInt("hs_count", -1));
-        return iconFor(state);
-    }
-
-    /** The same icon everywhere: widget, status bar, tile, notification. */
+    /** The same icon everywhere: widget, tile, menu, app. */
     static int iconFor(String state) {
+        if ("hotspot".equals(state)) return R.drawable.ic_hotspot;
         if ("offline".equals(state)) return R.drawable.ic_stat_bad;
         if ("nowifi".equals(state)) return R.drawable.ic_stat_off;
         return R.drawable.ic_stat_ok;

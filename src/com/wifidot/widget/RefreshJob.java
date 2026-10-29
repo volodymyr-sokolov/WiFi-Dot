@@ -7,7 +7,7 @@ import android.app.job.JobService;
 import android.content.ComponentName;
 import android.content.Context;
 
-/** Periodic re-check (~every 15 min) and restart of the monitor if the system stopped it. */
+/** Periodic re-check (~every 15 min), a safety net behind the poll alarm. */
 public class RefreshJob extends JobService {
     private static final int JOB_ID = 4242;
 
@@ -28,7 +28,6 @@ public class RefreshJob extends JobService {
 
     @Override
     public boolean onStartJob(final JobParameters params) {
-        MonitorService.start(this); // restart if the system killed it
         Checker.runAsync(this, new Runnable() {
             public void run() { jobFinished(params, false); }
         });

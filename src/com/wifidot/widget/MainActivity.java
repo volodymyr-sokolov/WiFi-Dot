@@ -43,7 +43,6 @@ import java.util.concurrent.Executor;
 
 /** Main screen: live status, connection speed, where the status is shown, settings, icon legend. */
 public class MainActivity extends Activity implements SharedPreferences.OnSharedPreferenceChangeListener {
-    private static final String POST_NOTIF = "android.permission.POST_NOTIFICATIONS";
     private static final String LOCATION = "android.permission.ACCESS_FINE_LOCATION";
 
     private int cBg, cCard, cText, cSub, cIcon, cRipple, cPill, cLine;
@@ -55,11 +54,9 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private ImageView statusIcon;
     private TextView statusTitle, statusSub, statusTime;
     private TextView linkValue, latencyValue, downloadValue, testLabel;
-    private Switch swIcon, swAlerts, swWidget, swTile, swStarlink;
-    private TextView starlinkSub, locationSub, batterySub, exactSub;
-    private View addWidget, addTile, diagSection;
-    private LinearLayout diagCard, diagActions;
-    private TextView diagText;
+    private Switch swWidget, swTile, swStarlink;
+    private TextView starlinkSub, locationSub, batterySub;
+    private View addWidget, addTile;
     private boolean binding;
     private SpeedTest test;
 
@@ -84,10 +81,9 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         getWindow().setBackgroundDrawable(new ColorDrawable(cBg));
         setContentView(buildUi());
 
-        askNotifPermission();
         Checker.registerNetworkCallback(this);
         RefreshJob.schedule(this);
-        MonitorService.start(this);
+        Cleanup.run(this);
         Checker.runAsync(this, null);
     }
 
@@ -164,32 +160,6 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         status.addView(pills);
         col.addView(status);
 
-        // ---- Hotspot diagnostics (only while the hotspot is on)
-        diagSection = section("Hotspot diagnostics");
-        col.addView(diagSection);
-        diagCard = card(true);
-        diagText = text("", 12, cSub, false);
-        diagText.setTypeface(Typeface.MONOSPACE);
-        diagText.setTextIsSelectable(true);
-        diagCard.addView(diagText);
-        TextView diagHint = text("Long-press to select and copy. Send this if the device count looks wrong.", 12, cSub, false);
-        diagHint.setPadding(0, px(8), 0, 0);
-        diagCard.addView(diagHint);
-        diagActions = hbox();
-        diagActions.setPadding(0, px(12), 0, 0);
-        LinearLayout.LayoutParams d1 = new LinearLayout.LayoutParams(0, -2, 1);
-        d1.rightMargin = px(6);
-        LinearLayout.LayoutParams d2 = new LinearLayout.LayoutParams(0, -2, 1);
-        d2.leftMargin = px(6);
-        diagActions.addView(pill(R.drawable.ic_hs_1, "Exact count", new View.OnClickListener() {
-            public void onClick(View v) { openNotificationAccess(); }
-        }), d1);
-        diagActions.addView(pill(R.drawable.ic_ui_info, "App info", new View.OnClickListener() {
-            public void onClick(View v) { openAppSettings(); }
-        }), d2);
-        diagCard.addView(diagActions);
-        col.addView(diagCard);
-
         // ---- Connection speed
         col.addView(section("Connection speed"));
         LinearLayout speed = card(false);
@@ -211,36 +181,10 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         col.addView(section("Show status in"));
         LinearLayout show = card(false);
 
-        swIcon = new Switch(this);
-        show.addView(row(R.drawable.ic_stat_ok, "Status bar icon",
-                text("Next to the clock · checks every 10 s", 13, cSub, false), swIcon, null));
-        swIcon.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(CompoundButton v, boolean on) {
-                if (binding) return;
-                Prefs.setStatusIcon(MainActivity.this, on);
-                if (on) askNotifPermission();
-                StatusNotifier.update(MainActivity.this);
-                Checker.runAsync(MainActivity.this, null);
-            }
-        });
-
-        swAlerts = new Switch(this);
-        show.addView(divider());
-        show.addView(row(R.drawable.ic_ui_bell, "Pop-up alerts",
-                text("Only when the internet goes down or comes back", 13, cSub, false), swAlerts, null));
-        swAlerts.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(CompoundButton v, boolean on) {
-                if (binding) return;
-                Prefs.setAlerts(MainActivity.this, on);
-                if (on) askNotifPermission();
-            }
-        });
-
         swWidget = new Switch(this);
         addWidget = smallPill("Add", new View.OnClickListener() {
             public void onClick(View v) { requestPinWidget(); }
         });
-        show.addView(divider());
         show.addView(row(R.drawable.ic_ui_widgets, "Home screen widget",
                 text("Long-press the home screen → Widgets → WiFi Dot", 13, cSub, false),
                 pair(addWidget, swWidget), null));
@@ -299,15 +243,6 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                     }
                 }));
 
-        exactSub = text("", 13, cSub, false);
-        settings.addView(divider());
-        settings.addView(row(R.drawable.ic_hs_1, "Exact hotspot device count", exactSub, chevron(),
-                new View.OnClickListener() {
-                    public void onClick(View v) {
-                        openNotificationAccess();
-                    }
-                }));
-
         batterySub = text("", 13, cSub, false);
         settings.addView(divider());
         settings.addView(row(R.drawable.ic_ui_battery, "Battery optimization", batterySub, chevron(),
@@ -322,12 +257,11 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         legend.addView(legendRow(R.drawable.ic_stat_ok, Checker.GREEN, "Internet is available"));
         legend.addView(legendRow(R.drawable.ic_stat_bad, Checker.RED, "Wi-Fi connected, no internet"));
         legend.addView(legendRow(R.drawable.ic_stat_off, Checker.GREY, "Wi-Fi is off (widget only)"));
-        legend.addView(legendRow(R.drawable.ic_hs_2, Checker.BLUE, "Hotspot on · number of connected devices"));
+        legend.addView(legendRow(R.drawable.ic_hotspot, Checker.BLUE, "Phone hotspot is on"));
         col.addView(legend);
 
-        TextView foot = text("Tap the widget for Details or the router page. The status bar icon and the "
-                + "tile open the router page — Starlink: 192.168.100.1 — or the hotspot settings. "
-                + "The device count is best effort: Android doesn't give apps the hotspot client list.", 12, cSub, false);
+        TextView foot = text("Tap the widget for Details or the router page. The tile opens the router page "
+                + "(Starlink: 192.168.100.1), or the hotspot settings while the hotspot is on.", 12, cSub, false);
         foot.setPadding(px(6), px(14), px(6), 0);
         col.addView(foot);
 
@@ -354,18 +288,10 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         else statusTitle.setText("Checking…");
         String host = url.replace("http://", "").replace("/", "");
         if (hs) {
-            int n = prefs.getInt("hs_count", -1);
-            statusSub.setText((n < 0 ? "Devices: unknown" : Checker.devicesText(n) + " connected")
-                    + (hsOnline ? " · internet OK" : " · no internet"));
+            statusSub.setText(hsOnline ? "Sharing your connection · internet OK" : "No internet to share");
         } else statusSub.setText("nowifi".equals(state) ? "Connect to a Wi-Fi network"
                 : (host.length() > 0 && !host.equals(label) ? label + " · " + host : label));
         updateTime();
-
-        boolean showDiag = hs;
-        diagSection.setVisibility(showDiag ? View.VISIBLE : View.GONE);
-        diagCard.setVisibility(showDiag ? View.VISIBLE : View.GONE);
-        diagText.setText(prefs.getString("hs_report", "Collecting…"));
-        diagActions.setVisibility(HotspotNotifications.granted(this) ? View.GONE : View.VISIBLE);
 
         long lat = prefs.getLong("latency", -1);
         latencyValue.setText(lat >= 0 ? lat + " ms" : ("online".equals(state) || hsOnline ? "—" : "No internet"));
@@ -378,8 +304,6 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         updateLink();
 
         binding = true;
-        swIcon.setChecked(Prefs.statusIcon(this));
-        swAlerts.setChecked(Prefs.alerts(this));
         swWidget.setChecked(Prefs.widget(this));
         swTile.setChecked(Prefs.tile(this));
         boolean marked = Checker.markedStarlink(this, gw);
@@ -393,13 +317,6 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                 : "Gateway " + gw + (marked ? " · opens 192.168.100.1" : " · use if not detected"));
         locationSub.setText(checkSelfPermission(LOCATION) == 0
                 ? "On · also needs Location turned on" : "Needs location access");
-        boolean exact = HotspotNotifications.granted(this);
-        exactSub.setText(exact
-                ? "On · read from the system hotspot notification ✓"
-                : Build.VERSION.SDK_INT >= 33
-                    ? "Off · tap, then turn on WiFi Dot. Switch greyed out? App info → ⋮ → Allow restricted settings"
-                    : "Off · tap, then turn on WiFi Dot");
-        if (exact) HotspotNotifications.rebind(this);
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         batterySub.setText(pm.isIgnoringBatteryOptimizations(getPackageName())
                 ? "Off for WiFi Dot ✓" : "Turn off so background checks keep running");
@@ -664,20 +581,6 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         return p;
     }
 
-    /** Opens WiFi Dot's own Notification-access page where possible, else the list. */
-    private void openNotificationAccess() {
-        Intent detail = new Intent("android.settings.NOTIFICATION_LISTENER_DETAIL_SETTINGS")
-                .putExtra("android.provider.extra.NOTIFICATION_LISTENER_COMPONENT_NAME",
-                        HotspotNotifications.component(this).flattenToString());
-        Intent[] tries = Build.VERSION.SDK_INT >= 30
-                ? new Intent[]{detail, new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")}
-                : new Intent[]{new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")};
-        for (Intent i : tries) {
-            try { startActivity(i); return; } catch (Throwable ignored) {}
-        }
-        openAppSettings();
-    }
-
     private void openAppSettings() {
         try {
             startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -685,16 +588,9 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         } catch (Throwable ignored) {}
     }
 
-    private void askNotifPermission() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(POST_NOTIF) != 0) {
-            requestPermissions(new String[]{POST_NOTIF}, 1);
-        }
-    }
-
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
         prefs.edit().putLong("detected2", 0).apply();
-        MonitorService.start(this);
         Checker.runAsync(this, null);
         refresh();
     }

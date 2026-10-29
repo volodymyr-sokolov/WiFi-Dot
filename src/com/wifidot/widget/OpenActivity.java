@@ -7,7 +7,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.widget.Toast;
 
-/** Tap on widget/tile/notification: open the router or Starlink page in the browser and re-check. */
+/** Opens the router or Starlink page in the browser (or hotspot / Wi-Fi settings) and re-checks. */
 public class OpenActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
@@ -29,7 +29,6 @@ public class OpenActivity extends Activity {
         } catch (Throwable e) {
             Toast.makeText(this, "Could not open " + url, Toast.LENGTH_SHORT).show();
         }
-        MonitorService.start(this);
         Checker.runAsync(this, null);
         finish();
     }

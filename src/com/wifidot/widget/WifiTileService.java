@@ -22,7 +22,6 @@ public class WifiTileService extends TileService {
 
     @Override public void onStartListening() {
         refresh();
-        MonitorService.start(this);
         Checker.runAsync(this, null); // result arrives via requestUpdate
     }
 
@@ -34,7 +33,8 @@ public class WifiTileService extends TileService {
     private void openPage() {
         Intent i = new Intent(this, OpenActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
-            if (Build.VERSION.SDK_INT >= 34) startActivityAndCollapse(StatusNotifier.openIntent(this));
+            if (Build.VERSION.SDK_INT >= 34) startActivityAndCollapse(android.app.PendingIntent.getActivity(
+                    this, 0, i, android.app.PendingIntent.FLAG_UPDATE_CURRENT | 0x04000000 /* IMMUTABLE */));
             else startActivityAndCollapse(i);
         } catch (Throwable e) {
             try { startActivity(i); } catch (Throwable ignored) {}
@@ -50,8 +50,8 @@ public class WifiTileService extends TileService {
         String sub;
         if ("hotspot".equals(state)) {
             t.setState(Tile.STATE_ACTIVE);
-            t.setIcon(Icon.createWithResource(this, Checker.iconFor(p)));
-            sub = label + ("offline".equals(p.getString("hs_net", "")) ? " · no internet" : "");
+            t.setIcon(Icon.createWithResource(this, R.drawable.ic_hotspot));
+            sub = "offline".equals(p.getString("hs_net", "")) ? "On · no internet" : "On";
             label = "Hotspot";
         } else if ("online".equals(state)) {
             t.setState(Tile.STATE_ACTIVE);

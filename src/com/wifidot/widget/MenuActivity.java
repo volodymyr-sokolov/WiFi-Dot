@@ -16,7 +16,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-/** Pop-up menu shown when the home-screen widget is tapped: Details / Router main page. */
+/** Small menu shown when the home-screen widget is tapped: Details / Router main page. */
 public class MenuActivity extends Activity {
     private float dp;
     private int cCard, cText, cSub, cIcon, cRipple, cLine;
@@ -57,7 +57,7 @@ public class MenuActivity extends Activity {
         ht.setOrientation(LinearLayout.VERTICAL);
         ht.setPadding(px(14), 0, 0, 0);
         boolean hs = "hotspot".equals(state);
-        if (hs) label = label + ("offline".equals(p.getString("hs_net", "")) ? " · no internet" : " connected");
+        if (hs) label = "offline".equals(p.getString("hs_net", "")) ? "No internet to share" : "Sharing your connection";
         String title = hs ? "Hotspot on" : "online".equals(state) ? "Internet OK" : "offline".equals(state) ? "No internet"
                 : "nowifi".equals(state) ? "Wi-Fi is off" : "Checking…";
         ht.addView(text(title, 18, cText, true));
@@ -79,7 +79,7 @@ public class MenuActivity extends Activity {
         boolean noWifi = "nowifi".equals(state);
         card.addView(item(R.drawable.ic_ui_open,
                 hs ? "Hotspot settings" : noWifi ? "Wi-Fi settings" : "Router main page",
-                hs ? "Connected devices, name, password" : noWifi ? "Connect to a network"
+                hs ? "Name, password, devices" : noWifi ? "Connect to a network"
                         : (host.length() > 0 ? host : "Address unknown"),
                 new View.OnClickListener() {
                     public void onClick(View v) {
@@ -96,7 +96,6 @@ public class MenuActivity extends Activity {
         setContentView(root);
         getWindow().setLayout(-2, -2);
 
-        MonitorService.start(this);
         Checker.runAsync(this, null);
     }
 

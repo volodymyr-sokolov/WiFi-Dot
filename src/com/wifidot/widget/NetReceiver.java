@@ -10,9 +10,8 @@ public class NetReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context ctx, Intent intent) {
-        if (Poller.ACTION_POLL.equals(intent.getAction()) && MonitorService.running) return;
         RefreshJob.schedule(ctx);
-        MonitorService.start(ctx);
+        Cleanup.run(ctx);
         final PendingResult pr = goAsync();
         Checker.runAsync(ctx, new Runnable() { public void run() { pr.finish(); } });
     }

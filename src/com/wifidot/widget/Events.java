@@ -28,8 +28,6 @@ final class Events {
             app.registerReceiver(new BroadcastReceiver() {
                 @Override public void onReceive(Context c, Intent i) {
                     if (isInitialStickyBroadcast()) return;
-                    if ("android.net.wifi.WIFI_AP_STATE_CHANGED".equals(i.getAction())) Hotspot.forgetCache();
-                    MonitorService.start(app);
                     Checker.runAsync(app, null);
                 }
             }, f);
