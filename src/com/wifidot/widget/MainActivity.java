@@ -58,7 +58,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private Switch swIcon, swAlerts, swWidget, swTile, swStarlink;
     private TextView starlinkSub, locationSub, batterySub, exactSub;
     private View addWidget, addTile, diagSection;
-    private LinearLayout diagCard;
+    private LinearLayout diagCard, diagActions;
     private TextView diagText;
     private boolean binding;
     private SpeedTest test;
@@ -175,6 +175,19 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         TextView diagHint = text("Long-press to select and copy. Send this if the device count looks wrong.", 12, cSub, false);
         diagHint.setPadding(0, px(8), 0, 0);
         diagCard.addView(diagHint);
+        diagActions = hbox();
+        diagActions.setPadding(0, px(12), 0, 0);
+        LinearLayout.LayoutParams d1 = new LinearLayout.LayoutParams(0, -2, 1);
+        d1.rightMargin = px(6);
+        LinearLayout.LayoutParams d2 = new LinearLayout.LayoutParams(0, -2, 1);
+        d2.leftMargin = px(6);
+        diagActions.addView(pill(R.drawable.ic_hs_1, "Exact count", new View.OnClickListener() {
+            public void onClick(View v) { openNotificationAccess(); }
+        }), d1);
+        diagActions.addView(pill(R.drawable.ic_ui_info, "App info", new View.OnClickListener() {
+            public void onClick(View v) { openAppSettings(); }
+        }), d2);
+        diagCard.addView(diagActions);
         col.addView(diagCard);
 
         // ---- Connection speed
@@ -291,8 +304,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         settings.addView(row(R.drawable.ic_hs_1, "Exact hotspot device count", exactSub, chevron(),
                 new View.OnClickListener() {
                     public void onClick(View v) {
-                        try { startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); }
-                        catch (Throwable e) { openAppSettings(); }
+                        openNotificationAccess();
                     }
                 }));
 
@@ -353,6 +365,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         diagSection.setVisibility(showDiag ? View.VISIBLE : View.GONE);
         diagCard.setVisibility(showDiag ? View.VISIBLE : View.GONE);
         diagText.setText(prefs.getString("hs_report", "Collecting…"));
+        diagActions.setVisibility(HotspotNotifications.granted(this) ? View.GONE : View.VISIBLE);
 
         long lat = prefs.getLong("latency", -1);
         latencyValue.setText(lat >= 0 ? lat + " ms" : ("online".equals(state) || hsOnline ? "—" : "No internet"));
@@ -380,9 +393,13 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                 : "Gateway " + gw + (marked ? " · opens 192.168.100.1" : " · use if not detected"));
         locationSub.setText(checkSelfPermission(LOCATION) == 0
                 ? "On · also needs Location turned on" : "Needs location access");
-        exactSub.setText(HotspotNotifications.granted(this)
+        boolean exact = HotspotNotifications.granted(this);
+        exactSub.setText(exact
                 ? "On · read from the system hotspot notification ✓"
-                : "Turn on Notification access for WiFi Dot");
+                : Build.VERSION.SDK_INT >= 33
+                    ? "Off · tap, then turn on WiFi Dot. Switch greyed out? App info → ⋮ → Allow restricted settings"
+                    : "Off · tap, then turn on WiFi Dot");
+        if (exact) HotspotNotifications.rebind(this);
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         batterySub.setText(pm.isIgnoringBatteryOptimizations(getPackageName())
                 ? "Off for WiFi Dot ✓" : "Turn off so background checks keep running");
@@ -645,6 +662,20 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         p.addView(text(s, 13, cText, true));
         p.setOnClickListener(click);
         return p;
+    }
+
+    /** Opens WiFi Dot's own Notification-access page where possible, else the list. */
+    private void openNotificationAccess() {
+        Intent detail = new Intent("android.settings.NOTIFICATION_LISTENER_DETAIL_SETTINGS")
+                .putExtra("android.provider.extra.NOTIFICATION_LISTENER_COMPONENT_NAME",
+                        HotspotNotifications.component(this).flattenToString());
+        Intent[] tries = Build.VERSION.SDK_INT >= 30
+                ? new Intent[]{detail, new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")}
+                : new Intent[]{new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")};
+        for (Intent i : tries) {
+            try { startActivity(i); return; } catch (Throwable ignored) {}
+        }
+        openAppSettings();
     }
 
     private void openAppSettings() {

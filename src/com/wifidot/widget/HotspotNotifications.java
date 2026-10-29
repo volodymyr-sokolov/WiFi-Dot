@@ -30,17 +30,36 @@ public class HotspotNotifications extends NotificationListenerService {
 
     static volatile boolean connected = false;
 
+    static ComponentName component(Context ctx) { return new ComponentName(ctx, HotspotNotifications.class); }
+
     /** Is Notification access granted to WiFi Dot? */
     static boolean granted(Context ctx) {
+        if (connected) return true;
+        try { // Android 8.1+: the official check
+            Object nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            Object r = nm.getClass().getMethod("isNotificationListenerAccessGranted", ComponentName.class)
+                    .invoke(nm, component(ctx));
+            if (r instanceof Boolean) return (Boolean) r;
+        } catch (Throwable ignored) {}
         String s = Settings.Secure.getString(ctx.getContentResolver(), "enabled_notification_listeners");
-        return s != null && s.contains(new ComponentName(ctx, HotspotNotifications.class).flattenToString());
+        if (s == null) return false;
+        ComponentName c = component(ctx);
+        return s.contains(c.flattenToString()) || s.contains(c.flattenToShortString());
+    }
+
+    /** Ask the system to (re)connect the listener after access was just granted. */
+    static void rebind(Context ctx) {
+        if (connected || !granted(ctx)) return;
+        try {
+            NotificationListenerService.class.getMethod("requestRebind", ComponentName.class)
+                    .invoke(null, component(ctx));
+        } catch (Throwable ignored) {}
     }
 
     /** Device count from the system notification, or -1 if unknown. */
     static int count(Context ctx) {
-        SharedPreferences p = ctx.getSharedPreferences(Checker.PREFS, 0);
         if (!granted(ctx)) return -1;
-        return p.getInt("hs_sys_count", -1);
+        return ctx.getSharedPreferences(Checker.PREFS, 0).getInt("hs_sys_count", -1);
     }
 
     @Override public void onListenerConnected() { connected = true; scan(); }

@@ -98,7 +98,9 @@ public final class Checker {
             } else {
                 hsCount = Hotspot.countClients(ctx, wifi != null ? clientIp(cm, wifi) : null);
                 report = (HotspotNotifications.granted(ctx)
-                        ? "System notification: no device count found\n"
+                        ? "System notification: access on, listener "
+                            + (HotspotNotifications.connected ? "connected" : "not connected yet")
+                            + ", no device count found\n"
                         : "System notification: Notification access is off\n") + Hotspot.report();
             }
             p.edit().putString("hs_report", report).apply();

@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v2.1)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v2.2)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -40,6 +40,7 @@ Android doesn't give ordinary apps the hotspot client list. The most reliable so
 "Hotspot is active · 1 device connected" notification:
 
 - **Exact (recommended):** turn on **Exact hotspot device count** in the app and grant WiFi Dot *Notification access*. The app then reads only the number from the system hotspot notification and updates instantly.
+  On Android 13+ an app installed from an APK file can't get this access at first: the switch is greyed out. Open **App info → ⋮ → Allow restricted settings**, then turn the switch on.
 - **Where the phone allows it:** the app reads the system's neighbour table, which is also exact.
 - **Otherwise:** the app sweeps the hotspot subnet with ping and TCP every 30 s. A device with a strict firewall may not be counted.
 

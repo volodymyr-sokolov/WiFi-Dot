@@ -246,6 +246,7 @@ final class Hotspot {
         long t0 = System.currentTimeMillis();
         try {
             byte[] own = ap.getAddress().getAddress();
+            final InetAddress src = ap.getAddress();
             final AtomicInteger alive = new AtomicInteger(), byPing = new AtomicInteger();
             ExecutorService ex = Executors.newFixedThreadPool(128);
             for (int last = 1; last <= 254; last++) {
@@ -257,7 +258,7 @@ final class Hotspot {
                         try {
                             InetAddress host = InetAddress.getByAddress(b);
                             if (host.isReachable(600)) { alive.incrementAndGet(); byPing.incrementAndGet(); }
-                            else if (tcpAlive(host)) alive.incrementAndGet();
+                            else if (tcpAlive(host, src)) alive.incrementAndGet();
                         } catch (Throwable ignored) {}
                     }
                 });
@@ -275,10 +276,12 @@ final class Hotspot {
     }
 
     /** A host that answers a TCP connect — even with "refused" — is there. */
-    private static boolean tcpAlive(InetAddress host) {
+    private static boolean tcpAlive(InetAddress host, InetAddress src) {
         for (int port : PORTS) {
             Socket s = new Socket();
             try {
+                // Send from the hotspot's own address so the probe leaves via the hotspot, not mobile data.
+                try { s.bind(new InetSocketAddress(src, 0)); } catch (Throwable ignored) {}
                 s.connect(new InetSocketAddress(host, port), 300);
                 return true;
             } catch (java.net.ConnectException e) {
