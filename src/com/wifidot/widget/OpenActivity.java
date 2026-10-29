@@ -15,7 +15,9 @@ public class OpenActivity extends Activity {
         String state = getSharedPreferences(Checker.PREFS, 0).getString("state", "");
         String url = getSharedPreferences(Checker.PREFS, 0).getString("url", "");
         try {
-            if ("nowifi".equals(state)) {
+            if ("hotspot".equals(state)) {
+                openHotspotSettings();
+            } else if ("nowifi".equals(state)) {
                 startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS));
             } else if (url.length() > 0) {
                 Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
@@ -30,5 +32,16 @@ public class OpenActivity extends Activity {
         MonitorService.start(this);
         Checker.runAsync(this, null);
         finish();
+    }
+
+    private void openHotspotSettings() {
+        Intent[] tries = {
+                new Intent().setClassName("com.android.settings", "com.android.settings.TetherSettings"),
+                new Intent("android.settings.TETHER_SETTINGS"),
+                new Intent(Settings.ACTION_WIRELESS_SETTINGS),
+        };
+        for (Intent i : tries) {
+            try { startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return; } catch (Throwable ignored) {}
+        }
     }
 }

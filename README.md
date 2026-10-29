@@ -5,13 +5,14 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v1.7)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v1.8)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
 | Green fan | Internet is available |
 | Red fan with **!** | Wi-Fi connected, no internet |
 | Grey crossed-out fan | Wi-Fi is off (widget and app only; never shown next to the clock) |
+| Blue hotspot with a number | The phone's hotspot is on; the number is how many devices are connected (dot = none, + = 10 or more) |
 
 ## Where the status appears
 
@@ -23,6 +24,22 @@ Each can be turned on or off in the app (all on by default):
 - **Quick Settings tile**: "Wi-Fi Internet".
 
 The status bar icon and the tile open the router page directly. **Starlink** opens `http://192.168.100.1`. Other routers open their gateway address. TP-Link, Keenetic, ASUS, MikroTik, Xiaomi and others are recognised by name.
+
+## Hotspot
+
+When the phone's own Wi-Fi hotspot is on, every status place switches to a blue hotspot icon with the number of connected devices in the middle:
+
+- the status bar icon
+- the widget, which shows "1 device", "3 devices" and so on
+- the Quick Settings tile
+- the app
+
+Tapping it opens the hotspot settings. The app also checks whether the shared connection has internet.
+
+Android doesn't give ordinary apps the hotspot client list, so the count is best effort:
+
+- **Older phones:** the app reads the system's neighbour table.
+- **Android 10+:** the app sweeps the hotspot subnet with ping and TCP every 30 s. A device with a strict firewall may not be counted.
 
 ## Connection speed
 

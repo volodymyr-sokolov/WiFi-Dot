@@ -50,13 +50,15 @@ public class MenuActivity extends Activity {
         head.setGravity(Gravity.CENTER_VERTICAL);
         head.setPadding(px(20), px(14), px(20), px(14));
         ImageView ic = new ImageView(this);
-        ic.setImageResource(Checker.iconFor(state));
+        ic.setImageResource(Checker.iconFor(p));
         ic.setColorFilter(Checker.colorFor(state));
         head.addView(ic, new LinearLayout.LayoutParams(px(32), px(32)));
         LinearLayout ht = new LinearLayout(this);
         ht.setOrientation(LinearLayout.VERTICAL);
         ht.setPadding(px(14), 0, 0, 0);
-        String title = "online".equals(state) ? "Internet OK" : "offline".equals(state) ? "No internet"
+        boolean hs = "hotspot".equals(state);
+        if (hs) label = label + ("offline".equals(p.getString("hs_net", "")) ? " · no internet" : " connected");
+        String title = hs ? "Hotspot on" : "online".equals(state) ? "Internet OK" : "offline".equals(state) ? "No internet"
                 : "nowifi".equals(state) ? "Wi-Fi is off" : "Checking…";
         ht.addView(text(title, 18, cText, true));
         if (label.length() > 0 && !"nowifi".equals(state)) ht.addView(text(label, 13, cSub, false));
@@ -75,8 +77,10 @@ public class MenuActivity extends Activity {
             }
         }));
         boolean noWifi = "nowifi".equals(state);
-        card.addView(item(R.drawable.ic_ui_open, noWifi ? "Wi-Fi settings" : "Router main page",
-                noWifi ? "Connect to a network" : (host.length() > 0 ? host : "Address unknown"),
+        card.addView(item(R.drawable.ic_ui_open,
+                hs ? "Hotspot settings" : noWifi ? "Wi-Fi settings" : "Router main page",
+                hs ? "Connected devices, name, password" : noWifi ? "Connect to a network"
+                        : (host.length() > 0 ? host : "Address unknown"),
                 new View.OnClickListener() {
                     public void onClick(View v) {
                         startActivity(new Intent(MenuActivity.this, OpenActivity.class)

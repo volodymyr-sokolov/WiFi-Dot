@@ -37,7 +37,9 @@ final class StatusNotifier {
 
     static boolean enabled(Context ctx) { return Prefs.statusIcon(ctx); }
 
-    static boolean showsStatus(String state) { return "online".equals(state) || "offline".equals(state); }
+    static boolean showsStatus(String state) {
+        return "online".equals(state) || "offline".equals(state) || "hotspot".equals(state);
+    }
 
     /** Called after every status change. */
     static void update(Context ctx) {
@@ -52,7 +54,8 @@ final class StatusNotifier {
             return;
         }
 
-        boolean changed = !state.equals(p.getString("alerted_state", ""));
+        // Pop-ups only for internet going down / coming back over Wi-Fi — never for the hotspot.
+        boolean changed = !"hotspot".equals(state) && !state.equals(p.getString("alerted_state", ""));
         if (changed) p.edit().putString("alerted_state", state).apply();
         boolean alert = changed && Prefs.alerts(ctx);
 
@@ -76,13 +79,19 @@ final class StatusNotifier {
     }
 
     static String titleFor(String state, String label) {
+        if ("hotspot".equals(state)) return "Hotspot · " + label;
         if ("online".equals(state)) return "Internet OK · " + label;
         if ("offline".equals(state)) return "No internet · " + label;
         return "Checking Wi-Fi internet…";
     }
 
     private static String textFor(Context ctx) {
-        String url = ctx.getSharedPreferences(Checker.PREFS, 0).getString("url", "");
+        SharedPreferences p = ctx.getSharedPreferences(Checker.PREFS, 0);
+        if ("hotspot".equals(p.getString("state", ""))) {
+            return ("offline".equals(p.getString("hs_net", "")) ? "No internet to share · " : "")
+                    + "Tap to open hotspot settings";
+        }
+        String url = p.getString("url", "");
         return url.length() > 0 ? "Tap to open " + url.replace("http://", "").replace("/", "") : "";
     }
 
@@ -91,7 +100,7 @@ final class StatusNotifier {
         SharedPreferences p = ctx.getSharedPreferences(Checker.PREFS, 0);
         String state = p.getString("state", "");
         // Never the crossed-out icon next to the clock: before the first check show the plain fan.
-        int icon = showsStatus(state) ? Checker.iconFor(state) : R.drawable.ic_stat_ok;
+        int icon = showsStatus(state) ? Checker.iconFor(p) : R.drawable.ic_stat_ok;
         Notification.Builder b = builder(ctx, CH_STATUS)
                 .setSmallIcon(icon)
                 .setColor(Checker.colorFor(state))
@@ -113,7 +122,7 @@ final class StatusNotifier {
         SharedPreferences p = ctx.getSharedPreferences(Checker.PREFS, 0);
         String state = p.getString("state", "");
         Notification.Builder b = builder(ctx, CH_ALERT)
-                .setSmallIcon(Checker.iconFor(state))
+                .setSmallIcon(Checker.iconFor(p))
                 .setColor(Checker.colorFor(state))
                 .setContentTitle(titleFor(state, p.getString("label", "")))
                 .setContentText(textFor(ctx))

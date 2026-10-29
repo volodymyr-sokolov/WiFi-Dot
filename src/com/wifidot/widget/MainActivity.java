@@ -285,10 +285,12 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         legend.addView(legendRow(R.drawable.ic_stat_ok, Checker.GREEN, "Internet is available"));
         legend.addView(legendRow(R.drawable.ic_stat_bad, Checker.RED, "Wi-Fi connected, no internet"));
         legend.addView(legendRow(R.drawable.ic_stat_off, Checker.GREY, "Wi-Fi is off (widget only)"));
+        legend.addView(legendRow(R.drawable.ic_hs_2, Checker.BLUE, "Hotspot on · number of connected devices"));
         col.addView(legend);
 
         TextView foot = text("Tap the widget for Details or the router page. The status bar icon and the "
-                + "tile open the router page — Starlink: 192.168.100.1.", 12, cSub, false);
+                + "tile open the router page — Starlink: 192.168.100.1 — or the hotspot settings. "
+                + "The device count is best effort: Android doesn't give apps the hotspot client list.", 12, cSub, false);
         foot.setPadding(px(6), px(14), px(6), 0);
         col.addView(foot);
 
@@ -304,19 +306,26 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         String url = prefs.getString("url", "");
         String gw = prefs.getString("gw", "");
 
-        statusIcon.setImageResource(Checker.iconFor(state));
+        statusIcon.setImageResource(Checker.iconFor(prefs));
         statusIcon.setColorFilter(Checker.colorFor(state));
-        if ("online".equals(state)) statusTitle.setText("Internet OK");
+        boolean hs = "hotspot".equals(state);
+        boolean hsOnline = hs && "online".equals(prefs.getString("hs_net", ""));
+        if (hs) statusTitle.setText("Hotspot on");
+        else if ("online".equals(state)) statusTitle.setText("Internet OK");
         else if ("offline".equals(state)) statusTitle.setText("No internet");
         else if ("nowifi".equals(state)) statusTitle.setText("Wi-Fi is off");
         else statusTitle.setText("Checking…");
         String host = url.replace("http://", "").replace("/", "");
-        statusSub.setText("nowifi".equals(state) ? "Connect to a Wi-Fi network"
+        if (hs) {
+            int n = prefs.getInt("hs_count", -1);
+            statusSub.setText((n < 0 ? "Devices: unknown" : Checker.devicesText(n) + " connected")
+                    + (hsOnline ? " · internet OK" : " · no internet"));
+        } else statusSub.setText("nowifi".equals(state) ? "Connect to a Wi-Fi network"
                 : (host.length() > 0 && !host.equals(label) ? label + " · " + host : label));
         updateTime();
 
         long lat = prefs.getLong("latency", -1);
-        latencyValue.setText(lat >= 0 ? lat + " ms" : ("online".equals(state) ? "—" : "No internet"));
+        latencyValue.setText(lat >= 0 ? lat + " ms" : ("online".equals(state) || hsOnline ? "—" : "No internet"));
         if (test == null) {
             float dl = prefs.getFloat("dl_mbps", -1);
             long t = prefs.getLong("dl_time", 0);
@@ -353,7 +362,11 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     @SuppressWarnings("deprecation")
     private void updateLink() {
-        if ("nowifi".equals(prefs.getString("state", ""))) { linkValue.setText("Not connected"); return; }
+        String st = prefs.getString("state", "");
+        if ("nowifi".equals(st)) { linkValue.setText("Not connected"); return; }
+        if ("hotspot".equals(st) && !Checker.wifiClientConnected(this)) {
+            linkValue.setText("Hotspot on · sharing mobile data"); return;
+        }
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             WifiInfo wi = wm.getConnectionInfo();
@@ -380,14 +393,16 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     private void toggleSpeedTest() {
         if (test != null) { test.cancel(); return; }
-        if (!"online".equals(prefs.getString("state", ""))) {
-            downloadValue.setText("Needs internet over Wi-Fi");
+        String st = prefs.getString("state", "");
+        boolean ok = "online".equals(st) || "hotspot".equals(st) && "online".equals(prefs.getString("hs_net", ""));
+        if (!ok) {
+            downloadValue.setText("Needs a working internet connection");
             return;
         }
         test = new SpeedTest();
         testLabel.setText("Stop");
         downloadValue.setText("Testing…");
-        test.run(Checker.wifiNetwork(this), new SpeedTest.Listener() {
+        test.run(Checker.testNetwork(this), new SpeedTest.Listener() {
             public void progress(final double mbps) {
                 handler.post(new Runnable() { public void run() {
                     if (test != null) downloadValue.setText("Testing… " + fmtMbps(mbps));

@@ -48,7 +48,12 @@ public class WifiTileService extends TileService {
         String state = p.getString("state", "");
         String label = p.getString("label", "Wi-Fi");
         String sub;
-        if ("online".equals(state)) {
+        if ("hotspot".equals(state)) {
+            t.setState(Tile.STATE_ACTIVE);
+            t.setIcon(Icon.createWithResource(this, Checker.iconFor(p)));
+            sub = label + ("offline".equals(p.getString("hs_net", "")) ? " · no internet" : "");
+            label = "Hotspot";
+        } else if ("online".equals(state)) {
             t.setState(Tile.STATE_ACTIVE);
             t.setIcon(Icon.createWithResource(this, R.drawable.ic_stat_ok));
             sub = "Internet OK";

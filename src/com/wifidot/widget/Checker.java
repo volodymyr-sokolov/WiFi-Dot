@@ -72,7 +72,16 @@ public final class Checker {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, 0);
 
         String state, label, url, gw = "";
-        if (wifi == null) {
+        boolean hotspot = Hotspot.isOn(ctx);
+        int hsCount = -1;
+        String hsNet = "";
+        if (hotspot) {
+            // Phone is sharing its connection: blue hotspot icon with the number of devices.
+            hsCount = Hotspot.countClients(wifi != null ? clientIp(cm, wifi) : null);
+            Network up = wifi != null ? wifi : cm.getActiveNetwork();
+            hsNet = up != null && hasInternet(up) ? "online" : "offline";
+            state = "hotspot"; label = devicesText(hsCount); url = "";
+        } else if (wifi == null) {
             state = "nowifi"; label = "no Wi-Fi"; url = "";
         } else {
             boolean online = hasInternet(wifi);
@@ -103,30 +112,55 @@ public final class Checker {
         }
 
         boolean changed = !state.equals(p.getString("state", ""))
+                || hsCount != p.getInt("hs_count", -1)
+                || !hsNet.equals(p.getString("hs_net", ""))
                 || !label.equals(p.getString("label", ""))
                 || !url.equals(p.getString("url", ""));
         p.edit().putString("state", state).putString("label", label).putString("url", url)
-                .putString("gw", gw).putLong("latency", "online".equals(state) ? lastLatencyMs : -1)
+                .putString("gw", gw).putInt("hs_count", hsCount).putString("hs_net", hsNet)
+                .putLong("latency", "online".equals(state) || "online".equals(hsNet) ? lastLatencyMs : -1)
                 .putLong("time", System.currentTimeMillis()).apply();
         if (changed || !p.getBoolean("rendered", false)) {
             p.edit().putBoolean("rendered", true).apply();
             render(ctx);
         }
         // Without the foreground monitor, keep checking with light alarms while on Wi-Fi.
-        if (wifi == null) Poller.cancel(ctx);
+        if (wifi == null && !hotspot) Poller.cancel(ctx);
         else if (!MonitorService.running) Poller.schedule(ctx);
     }
 
-    /** Quick, no-network check: is any Wi-Fi network connected right now? */
+    /** Quick, no-network check: is Wi-Fi connected or the hotspot on right now? */
     static boolean wifiPresent(Context ctx) {
         try {
-            return findWifi((ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE)) != null;
+            return findWifi((ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE)) != null
+                    || Hotspot.isOn(ctx);
         } catch (Throwable e) { return true; }
     }
 
-    /** The Wi-Fi Network object (for the speed test), or null. */
-    static Network wifiNetwork(Context ctx) {
-        return findWifi((ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE));
+    /** Network for the speed test: Wi-Fi, or the shared (mobile) connection when the hotspot is on. */
+    static Network testNetwork(Context ctx) {
+        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+        Network w = findWifi(cm);
+        return w != null ? w : cm.getActiveNetwork();
+    }
+
+    private static String clientIp(ConnectivityManager cm, Network wifi) {
+        try {
+            for (android.net.LinkAddress la : cm.getLinkProperties(wifi).getLinkAddresses()) {
+                if (la.getAddress() instanceof Inet4Address) return la.getAddress().getHostAddress();
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    static boolean wifiClientConnected(Context ctx) {
+        return findWifi((ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE)) != null;
+    }
+
+    static String devicesText(int n) {
+        if (n < 0) return "Hotspot";
+        if (n == 0) return "No devices";
+        return n == 1 ? "1 device" : n + " devices";
     }
 
     // ---------- Wi-Fi ----------
@@ -314,7 +348,7 @@ public final class Checker {
         String label = p.getString("label", "…");
 
         RemoteViews rv = new RemoteViews(ctx.getPackageName(), R.layout.widget);
-        rv.setImageViewResource(R.id.wifi, iconFor(state));
+        rv.setImageViewResource(R.id.wifi, iconFor(p));
         rv.setInt(R.id.wifi, "setColorFilter", colorFor(state));
         rv.setTextViewText(R.id.label, label);
 
@@ -333,7 +367,24 @@ public final class Checker {
         WifiTileService.requestUpdate(ctx);
     }
 
-    static final int GREEN = 0xFF2ECC40, RED = 0xFFFF3B30, GREY = 0xFF9E9E9E;
+    static final int GREEN = 0xFF2ECC40, RED = 0xFFFF3B30, GREY = 0xFF9E9E9E, BLUE = 0xFF2F80ED;
+
+    private static final int[] HS_ICONS = {
+            R.drawable.ic_hs_0, R.drawable.ic_hs_1, R.drawable.ic_hs_2, R.drawable.ic_hs_3, R.drawable.ic_hs_4,
+            R.drawable.ic_hs_5, R.drawable.ic_hs_6, R.drawable.ic_hs_7, R.drawable.ic_hs_8, R.drawable.ic_hs_9};
+
+    /** Hotspot icon with the device count in the middle (dot = none/unknown, "+" = 10 or more). */
+    static int hotspotIcon(int count) {
+        if (count >= HS_ICONS.length) return R.drawable.ic_hs_plus;
+        return count <= 0 ? R.drawable.ic_hs_0 : HS_ICONS[count];
+    }
+
+    /** Icon for the saved status (includes the hotspot device count). */
+    static int iconFor(SharedPreferences p) {
+        String state = p.getString("state", "");
+        if ("hotspot".equals(state)) return hotspotIcon(p.getInt("hs_count", -1));
+        return iconFor(state);
+    }
 
     /** The same icon everywhere: widget, status bar, tile, notification. */
     static int iconFor(String state) {
@@ -345,6 +396,7 @@ public final class Checker {
     static int colorFor(String state) {
         if ("online".equals(state)) return GREEN;
         if ("offline".equals(state)) return RED;
+        if ("hotspot".equals(state)) return BLUE;
         return GREY; // Wi-Fi off / unknown
     }
 
