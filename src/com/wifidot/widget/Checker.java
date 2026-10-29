@@ -78,9 +78,18 @@ public final class Checker {
         String hsNet = "";
         if (hotspot) {
             // Phone is sharing its connection: blue hotspot icon with the number of devices.
-            hsCount = Hotspot.countClients(wifi != null ? clientIp(cm, wifi) : null);
-            Network up = wifi != null ? wifi : cm.getActiveNetwork();
-            hsNet = up != null && hasInternet(up) ? "online" : "offline";
+            // The hotspot shares the phone's default connection (usually mobile data).
+            Network up = cm.getActiveNetwork();
+            if (up == null) up = wifi;
+            NetworkCapabilities uc = up != null ? cm.getNetworkCapabilities(up) : null;
+            boolean validated = uc != null && uc.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            boolean probe = up != null && hasInternet(up);
+            hsNet = probe || validated ? "online" : "offline";
+            Hotspot.noteUpstream(up == null ? "none" : (uc != null && uc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                    ? "mobile" : uc != null && uc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? "Wi-Fi" : "other")
+                    + ", validated " + (validated ? "yes" : "no") + ", probe " + (probe ? "OK" : "failed"));
+            hsCount = Hotspot.countClients(ctx, wifi != null ? clientIp(cm, wifi) : null);
+            p.edit().putString("hs_report", Hotspot.report()).apply();
             state = "hotspot"; label = devicesText(hsCount); url = "";
         } else if (wifi == null) {
             state = "nowifi"; label = "no Wi-Fi"; url = "";
@@ -126,6 +135,7 @@ public final class Checker {
             render(ctx);
         }
         // Without the foreground monitor, keep checking with light alarms while on Wi-Fi.
+        try { StatusNotifier.maybeAlert(ctx); } catch (Throwable ignored) {}
         // Keep a light poll going even without Wi-Fi: turning the hotspot on/off creates no network event.
         if (!MonitorService.running) Poller.schedule(ctx);
     }
@@ -170,8 +180,11 @@ public final class Checker {
     private static Network findWifi(ConnectivityManager cm) {
         for (Network n : cm.getAllNetworks()) {
             NetworkCapabilities c = cm.getNetworkCapabilities(n);
+            // Wi-Fi client connections only: the hotspot / Wi-Fi Direct show up as local-only
+            // Wi-Fi networks without the INTERNET capability — those are not "Wi-Fi without internet".
             if (c != null && c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-                    && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                    && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                    && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
                 return n;
             }
         }

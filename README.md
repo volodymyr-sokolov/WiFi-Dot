@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v1.9)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v2.0)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -19,7 +19,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 Each can be turned on or off in the app (all on by default):
 
 - **Status bar icon**: a full-size icon next to the clock, checked every 10 s.
-- **Pop-up alerts**: shown only when the internet goes down or comes back, never twice for the same status.
+- **Pop-up alerts**: shown only when the internet goes down or comes back over Wi-Fi. The new status must be confirmed by two checks in a row, and the same status is never announced twice.
 - **Home screen widget**: a green, red or grey fan with the router name. Tap it for a menu with **Details** (opens the app) and **Router main page**.
 - **Quick Settings tile**: "Wi-Fi Internet".
 
@@ -40,6 +40,8 @@ Android doesn't give ordinary apps the hotspot client list, so the count is best
 
 - **Where the phone allows it:** the app reads the system's neighbour table, which is exact.
 - **Otherwise:** the app sweeps the hotspot subnet with ping and TCP every 30 s. A device with a strict firewall may not be counted.
+
+While the hotspot is on, the app shows a **Hotspot diagnostics** card listing what each method found, so a wrong count can be traced.
 
 Turning the hotspot on or off updates everything within seconds while the app is running in the background, or within about 20 s otherwise.
 

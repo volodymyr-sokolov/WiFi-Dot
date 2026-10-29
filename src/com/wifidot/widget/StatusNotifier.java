@@ -54,22 +54,42 @@ final class StatusNotifier {
             return;
         }
 
-        // Pop-ups only for internet going down / coming back over Wi-Fi — never for the hotspot.
-        boolean changed = !"hotspot".equals(state) && !state.equals(p.getString("alerted_state", ""));
-        if (changed) p.edit().putString("alerted_state", state).apply();
-        boolean alert = changed && Prefs.alerts(ctx);
-
+        // The icon itself always updates silently; pop-ups come from maybeAlert().
         if (Prefs.statusIcon(ctx)) {
-            last = build(ctx, alert);
+            last = build(ctx, false);
             try { nm.notify(NOTIF_ID, last); } catch (Throwable ignored) {}
             MonitorService.start(ctx);
         } else {
             MonitorService.stop(ctx);
             nm.cancel(NOTIF_ID);
-            if (alert) {
-                try { nm.notify(ALERT_ID, buildAlert(ctx)); } catch (Throwable ignored) {}
-            }
         }
+    }
+
+    /**
+     * Called after every check. A pop-up appears only when the internet went down or came back
+     * over Wi-Fi, the new status was seen by two checks in a row (so blips while Wi-Fi or the
+     * hotspot switch over never alert), and it differs from the last status we alerted about.
+     * Never for the hotspot.
+     */
+    static void maybeAlert(Context ctx) {
+        SharedPreferences p = ctx.getSharedPreferences(Checker.PREFS, 0);
+        String state = p.getString("state", "");
+        String prev = p.getString("confirm_state", "");
+        p.edit().putString("confirm_state", state).apply();
+        if (!"online".equals(state) && !"offline".equals(state)) return;
+        if (!state.equals(prev)) return;                                   // not confirmed yet
+        if (state.equals(p.getString("alerted_state", ""))) return;        // already told
+        p.edit().putString("alerted_state", state).apply();
+        if (!Prefs.alerts(ctx)) return;
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        try {
+            if (Prefs.statusIcon(ctx)) {
+                last = build(ctx, true);
+                nm.notify(NOTIF_ID, last);
+            } else {
+                nm.notify(ALERT_ID, buildAlert(ctx));
+            }
+        } catch (Throwable ignored) {}
     }
 
     static void cancelAll(Context ctx) {

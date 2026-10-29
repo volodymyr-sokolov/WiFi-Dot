@@ -3,6 +3,7 @@ package com.wifidot.widget;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.net.ConnectivityManager;
 import android.net.wifi.WifiManager;
 
 import java.io.BufferedReader;
@@ -14,8 +15,10 @@ import java.net.InetSocketAddress;
 import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -24,11 +27,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Phone hotspot (tethering) detection and a best-effort count of connected devices.
+ * Phone hotspot (tethering) detection and a count of connected devices.
  *
- * Android gives ordinary apps no API for the client list, so the count is taken from the
- * neighbour table when the system allows reading it, otherwise by a quick sweep of the
- * hotspot subnet (ping + TCP). Devices with a strict firewall may not be counted.
+ * Android gives ordinary apps no API for the client list, so several sources are tried:
+ * the neighbour table (/proc/net/arp, `ip neigh`), then a ping/TCP sweep of the hotspot subnet.
+ * Every step is written to a short report shown in the app ("Hotspot diagnostics").
  */
 final class Hotspot {
     private static final String ACTION_AP_STATE = "android.net.wifi.WIFI_AP_STATE_CHANGED";
@@ -38,8 +41,16 @@ final class Hotspot {
     private static volatile int cachedCount = -1;
     private static volatile long cachedAt = 0;
     private static volatile String cachedIface = null;
+    private static volatile String upstream = "";
+    private static volatile String report = "";
 
     private Hotspot() {}
+
+    static String report() { return report; }
+
+    static void noteUpstream(String s) { upstream = s; }
+
+    static void forgetCache() { cachedAt = 0; }
 
     /** Is the phone's Wi-Fi hotspot on? Cheap — safe to call often. */
     static boolean isOn(Context ctx) {
@@ -54,117 +65,173 @@ final class Hotspot {
             WifiManager wm = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             return (Boolean) WifiManager.class.getMethod("isWifiApEnabled").invoke(wm);
         } catch (Throwable ignored) {}
-        return apInterface(null) != null;
+        return !tetheredIfaces(ctx).isEmpty();
     }
 
     /**
      * Number of devices connected to the hotspot, or -1 if unknown.
      * @param wifiClientIp the phone's own Wi-Fi client address (to skip that interface), may be null
      */
-    static int countClients(String wifiClientIp) {
-        InterfaceAddress ap = apInterface(wifiClientIp);
-        if (ap == null) return -1;
-        String iface = ifaceName(ap);
+    static int countClients(Context ctx, String wifiClientIp) {
+        StringBuilder r = new StringBuilder();
+        List<String> tethered = tetheredIfaces(ctx);
+        r.append("Tethered: ").append(tethered.isEmpty() ? "unknown" : join(tethered)).append('\n');
 
-        int n = fromArp(iface);
-        if (n <= 0) n = fromIpNeigh(iface);
-        // An empty table may just mean "not allowed to read it" — confirm with a sweep.
-        if (n > 0) { cachedCount = n; cachedAt = System.currentTimeMillis(); cachedIface = iface; return n; }
+        Found ap = apInterface(tethered, wifiClientIp);
+        if (ap == null) {
+            r.append("Hotspot interface: not found · ").append(allIfaces()).append('\n');
+            report = r.append("Upstream: ").append(upstream).toString();
+            return -1;
+        }
+        r.append("Hotspot interface: ").append(ap.name).append(' ')
+                .append(ap.addr.getAddress().getHostAddress()).append('/').append(ap.addr.getNetworkPrefixLength()).append('\n');
 
-        // Neighbour table not readable (Android 10+): sweep the subnet, at most every 30 s.
+        int arp = fromArp(ap.name, r);
+        int neigh = arp > 0 ? -2 : fromIpNeigh(ap.name, r);
+        int n = Math.max(arp, neigh);
+        if (n > 0) {
+            cachedCount = n; cachedAt = System.currentTimeMillis(); cachedIface = ap.name;
+            report = r.append("Upstream: ").append(upstream).toString();
+            return n;
+        }
+
+        // Neighbour table not readable or empty: sweep the subnet, at most every 30 s.
         long now = System.currentTimeMillis();
-        if (cachedCount >= 0 && iface.equals(cachedIface) && now - cachedAt < SWEEP_EVERY_MS) return cachedCount;
-        n = sweep(ap);
-        cachedCount = n; cachedAt = now; cachedIface = iface;
-        return n;
+        if (cachedCount >= 0 && ap.name.equals(cachedIface) && now - cachedAt < SWEEP_EVERY_MS) {
+            r.append("Sweep: ").append(cachedCount).append(" (cached)\n");
+            report = r.append("Upstream: ").append(upstream).toString();
+            return cachedCount;
+        }
+        int swept = sweep(ap.addr, r);
+        if (swept < 0 && (arp == 0 || neigh == 0)) swept = 0;
+        cachedCount = swept; cachedAt = now; cachedIface = ap.name;
+        report = r.append("Upstream: ").append(upstream).toString();
+        return swept;
     }
-
-    static void forgetCache() { cachedAt = 0; }
 
     // ------------------------------------------------------------------ interface
 
-    private static final String[] AP_NAMES = {"ap", "swlan", "softap", "wlan1", "wlan2", "wifi-ap", "wl0.1"};
-
-    /** The hotspot's own address on its interface (usually x.x.x.1), or null. */
-    static InterfaceAddress apInterface(String wifiClientIp) {
+    /** Tethered interface names straight from the system (hidden API, usable at targetSdk 28). */
+    static List<String> tetheredIfaces(Context ctx) {
+        List<String> out = new ArrayList<String>();
         try {
-            InterfaceAddress fallback = null;
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            String[] ifs = (String[]) ConnectivityManager.class.getMethod("getTetheredIfaces").invoke(cm);
+            if (ifs != null) Collections.addAll(out, ifs);
+        } catch (Throwable ignored) {}
+        return out;
+    }
+
+    private static final class Found {
+        final String name; final InterfaceAddress addr;
+        Found(String n, InterfaceAddress a) { name = n; addr = a; }
+    }
+
+    private static final String[] AP_NAMES = {"ap", "swlan", "softap", "wlan", "wifi", "wl", "wigig"};
+    private static final String[] NOT_AP = {"rmnet", "ccmni", "clat", "v4-", "tun", "dummy", "lo", "ipsec",
+            "seth", "radio", "p2p", "bt-pan", "rndis", "usb", "ncm", "eth"};
+
+    private static Found apInterface(List<String> tethered, String wifiClientIp) {
+        try {
+            Found byName = null, anyPrivate = null;
             for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
-                if (!ni.isUp() || ni.isLoopback() || ni.isVirtual()) continue;
-                String name = ni.getName().toLowerCase(Locale.ROOT);
-                boolean apName = false;
-                for (String p : AP_NAMES) if (name.startsWith(p)) apName = true;
-                boolean wlan = name.startsWith("wlan");
-                if (!apName && !wlan) continue;
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                String name = ni.getName();
+                String lower = name.toLowerCase(Locale.ROOT);
                 for (InterfaceAddress ia : ni.getInterfaceAddresses()) {
                     InetAddress a = ia.getAddress();
                     if (!(a instanceof Inet4Address) || !a.isSiteLocalAddress()) continue;
-                    if (a.getHostAddress().equals(wifiClientIp)) continue; // that's the Wi-Fi client side
-                    if (apName) return ia;
-                    if (fallback == null && a.getHostAddress().endsWith(".1")) fallback = ia;
+                    if (a.getHostAddress().equals(wifiClientIp)) continue; // the Wi-Fi client side
+                    if (tethered.contains(name)) return new Found(name, ia);
+                    boolean bad = false;
+                    for (String x : NOT_AP) if (lower.startsWith(x)) bad = true;
+                    if (bad) continue;
+                    boolean apName = false;
+                    for (String x : AP_NAMES) if (lower.startsWith(x)) apName = true;
+                    if (apName && byName == null) byName = new Found(name, ia);
+                    if (anyPrivate == null && a.getHostAddress().endsWith(".1")) anyPrivate = new Found(name, ia);
                 }
             }
-            return fallback;
+            return byName != null ? byName : anyPrivate;
         } catch (Throwable e) {
             return null;
         }
     }
 
-    private static String ifaceName(InterfaceAddress ia) {
+    private static String allIfaces() {
+        StringBuilder sb = new StringBuilder();
         try {
             for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
-                for (InterfaceAddress x : ni.getInterfaceAddresses()) if (x.equals(ia)) return ni.getName();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                for (InterfaceAddress ia : ni.getInterfaceAddresses()) {
+                    if (ia.getAddress() instanceof Inet4Address) {
+                        if (sb.length() > 0) sb.append(", ");
+                        sb.append(ni.getName()).append('=').append(ia.getAddress().getHostAddress());
+                    }
+                }
             }
-        } catch (Throwable ignored) {}
-        return "";
+        } catch (Throwable e) {
+            return "interfaces unreadable";
+        }
+        return sb.length() == 0 ? "no IPv4 interfaces" : sb.toString();
     }
 
     // ------------------------------------------------------------------ neighbour table
 
-    /** /proc/net/arp — readable up to Android 9. */
-    private static int fromArp(String iface) {
-        BufferedReader r = null;
+    /** /proc/net/arp. Returns count, or -1 if unreadable. */
+    private static int fromArp(String iface, StringBuilder r) {
+        BufferedReader in = null;
         try {
-            r = new BufferedReader(new FileReader("/proc/net/arp"));
-            r.readLine(); // header
+            in = new BufferedReader(new FileReader("/proc/net/arp"));
+            in.readLine(); // header
             Set<String> macs = new HashSet<String>();
+            int rows = 0;
             String line;
-            while ((line = r.readLine()) != null) {
+            while ((line = in.readLine()) != null) {
                 String[] f = line.trim().split("\\s+");
-                // IP, HW type, Flags, HW address, Mask, Device
-                if (f.length >= 6 && f[5].equals(iface) && "0x2".equals(f[2]) && !f[3].equals("00:00:00:00:00:00")) {
-                    macs.add(f[3]);
-                }
+                // IP address, HW type, Flags, HW address, Mask, Device
+                if (f.length < 6) continue;
+                rows++;
+                if (f[5].equals(iface) && !"0x0".equals(f[2]) && !f[3].equals("00:00:00:00:00:00")) macs.add(f[3]);
             }
+            r.append("ARP table: ").append(macs.size()).append(" on ").append(iface)
+                    .append(" (").append(rows).append(" rows)\n");
             return macs.size();
         } catch (Throwable e) {
+            r.append("ARP table: blocked\n");
             return -1;
         } finally {
-            try { if (r != null) r.close(); } catch (Throwable ignored) {}
+            try { if (in != null) in.close(); } catch (Throwable ignored) {}
         }
     }
 
-    /** `ip neigh` — works on some phones where /proc/net/arp is blocked. */
-    private static int fromIpNeigh(String iface) {
+    /** `ip neigh`. Returns count, or -1 if not allowed. */
+    private static int fromIpNeigh(String iface, StringBuilder r) {
         Process p = null;
         try {
-            p = new ProcessBuilder("ip", "neigh", "show", "dev", iface).redirectErrorStream(true).start();
-            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            p = new ProcessBuilder("ip", "neigh", "show").redirectErrorStream(true).start();
+            BufferedReader in = new BufferedReader(new InputStreamReader(p.getInputStream()));
             Set<String> macs = new HashSet<String>();
-            boolean any = false;
+            int rows = 0;
             String line;
-            while ((line = r.readLine()) != null) {
-                any = true;
+            while ((line = in.readLine()) != null) {
                 String l = line.toLowerCase(Locale.ROOT);
-                if (l.contains("denied") || l.contains("not permitted")) return -1;
+                if (l.contains("denied") || l.contains("not permitted") || l.contains("cannot")) {
+                    r.append("ip neigh: blocked\n");
+                    return -1;
+                }
+                rows++;
+                if (!l.contains(" dev " + iface.toLowerCase(Locale.ROOT) + " ")) continue;
                 int i = l.indexOf("lladdr ");
                 if (i < 0 || l.contains("failed") || l.contains("incomplete")) continue;
                 macs.add(l.substring(i + 7).split("\\s+")[0]);
             }
             int code = p.waitFor();
-            if (code != 0) return -1;
-            return any ? macs.size() : -1;
+            if (code != 0) { r.append("ip neigh: error ").append(code).append('\n'); return -1; }
+            r.append("ip neigh: ").append(macs.size()).append(" (").append(rows).append(" rows)\n");
+            return rows == 0 ? -1 : macs.size();
         } catch (Throwable e) {
+            r.append("ip neigh: unavailable\n");
             return -1;
         } finally {
             if (p != null) p.destroy();
@@ -173,12 +240,13 @@ final class Hotspot {
 
     // ------------------------------------------------------------------ subnet sweep
 
-    private static final int[] PORTS = {62078 /* iPhone/iPad */, 80, 443, 445 /* Windows */};
+    private static final int[] PORTS = {62078 /* iPhone/iPad */, 80, 443, 445 /* Windows */, 7000 /* Mac */};
 
-    private static int sweep(InterfaceAddress ap) {
+    private static int sweep(InterfaceAddress ap, StringBuilder r) {
+        long t0 = System.currentTimeMillis();
         try {
             byte[] own = ap.getAddress().getAddress();
-            final AtomicInteger alive = new AtomicInteger();
+            final AtomicInteger alive = new AtomicInteger(), byPing = new AtomicInteger();
             ExecutorService ex = Executors.newFixedThreadPool(128);
             for (int last = 1; last <= 254; last++) {
                 if ((own[3] & 0xff) == last) continue;
@@ -188,16 +256,20 @@ final class Hotspot {
                     public void run() {
                         try {
                             InetAddress host = InetAddress.getByAddress(b);
-                            if (host.isReachable(500) /* ICMP; binding to the interface needs root */ || tcpAlive(host)) alive.incrementAndGet();
+                            if (host.isReachable(600)) { alive.incrementAndGet(); byPing.incrementAndGet(); }
+                            else if (tcpAlive(host)) alive.incrementAndGet();
                         } catch (Throwable ignored) {}
                     }
                 });
             }
             ex.shutdown();
-            ex.awaitTermination(6, TimeUnit.SECONDS);
+            ex.awaitTermination(7, TimeUnit.SECONDS);
             ex.shutdownNow();
+            r.append("Sweep: ").append(alive.get()).append(" found (").append(byPing.get()).append(" by ping) in ")
+                    .append(System.currentTimeMillis() - t0).append(" ms\n");
             return alive.get();
         } catch (Throwable e) {
+            r.append("Sweep: failed (").append(e.getClass().getSimpleName()).append(")\n");
             return -1;
         }
     }
@@ -218,5 +290,11 @@ final class Hotspot {
             }
         }
         return false;
+    }
+
+    private static String join(List<String> l) {
+        StringBuilder sb = new StringBuilder();
+        for (String s : l) { if (sb.length() > 0) sb.append(", "); sb.append(s); }
+        return sb.toString();
     }
 }

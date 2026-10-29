@@ -57,7 +57,9 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private TextView linkValue, latencyValue, downloadValue, testLabel;
     private Switch swIcon, swAlerts, swWidget, swTile, swStarlink;
     private TextView starlinkSub, locationSub, batterySub;
-    private View addWidget, addTile;
+    private View addWidget, addTile, diagSection;
+    private LinearLayout diagCard;
+    private TextView diagText;
     private boolean binding;
     private SpeedTest test;
 
@@ -161,6 +163,19 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         }), lp2);
         status.addView(pills);
         col.addView(status);
+
+        // ---- Hotspot diagnostics (only while the hotspot is on)
+        diagSection = section("Hotspot diagnostics");
+        col.addView(diagSection);
+        diagCard = card(true);
+        diagText = text("", 12, cSub, false);
+        diagText.setTypeface(Typeface.MONOSPACE);
+        diagText.setTextIsSelectable(true);
+        diagCard.addView(diagText);
+        TextView diagHint = text("Long-press to select and copy. Send this if the device count looks wrong.", 12, cSub, false);
+        diagHint.setPadding(0, px(8), 0, 0);
+        diagCard.addView(diagHint);
+        col.addView(diagCard);
 
         // ---- Connection speed
         col.addView(section("Connection speed"));
@@ -323,6 +338,11 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         } else statusSub.setText("nowifi".equals(state) ? "Connect to a Wi-Fi network"
                 : (host.length() > 0 && !host.equals(label) ? label + " · " + host : label));
         updateTime();
+
+        boolean showDiag = hs;
+        diagSection.setVisibility(showDiag ? View.VISIBLE : View.GONE);
+        diagCard.setVisibility(showDiag ? View.VISIBLE : View.GONE);
+        diagText.setText(prefs.getString("hs_report", "Collecting…"));
 
         long lat = prefs.getLong("latency", -1);
         latencyValue.setText(lat >= 0 ? lat + " ms" : ("online".equals(state) || hsOnline ? "—" : "No internet"));
