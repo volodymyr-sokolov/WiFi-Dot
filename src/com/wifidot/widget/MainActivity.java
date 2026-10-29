@@ -56,7 +56,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private TextView statusTitle, statusSub, statusTime;
     private TextView linkValue, latencyValue, downloadValue, testLabel;
     private Switch swIcon, swAlerts, swWidget, swTile, swStarlink;
-    private TextView starlinkSub, locationSub, batterySub;
+    private TextView starlinkSub, locationSub, batterySub, exactSub;
     private View addWidget, addTile, diagSection;
     private LinearLayout diagCard;
     private TextView diagText;
@@ -286,6 +286,16 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                     }
                 }));
 
+        exactSub = text("", 13, cSub, false);
+        settings.addView(divider());
+        settings.addView(row(R.drawable.ic_hs_1, "Exact hotspot device count", exactSub, chevron(),
+                new View.OnClickListener() {
+                    public void onClick(View v) {
+                        try { startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); }
+                        catch (Throwable e) { openAppSettings(); }
+                    }
+                }));
+
         batterySub = text("", 13, cSub, false);
         settings.addView(divider());
         settings.addView(row(R.drawable.ic_ui_battery, "Battery optimization", batterySub, chevron(),
@@ -370,6 +380,9 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                 : "Gateway " + gw + (marked ? " · opens 192.168.100.1" : " · use if not detected"));
         locationSub.setText(checkSelfPermission(LOCATION) == 0
                 ? "On · also needs Location turned on" : "Needs location access");
+        exactSub.setText(HotspotNotifications.granted(this)
+                ? "On · read from the system hotspot notification ✓"
+                : "Turn on Notification access for WiFi Dot");
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         batterySub.setText(pm.isIgnoringBatteryOptimizations(getPackageName())
                 ? "Off for WiFi Dot ✓" : "Turn off so background checks keep running");

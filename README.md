@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v2.0)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v2.1)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -36,9 +36,11 @@ When the phone's own Wi-Fi hotspot is on, every status place switches to a blue 
 
 Tapping it opens the hotspot settings. The app also checks whether the shared connection has internet.
 
-Android doesn't give ordinary apps the hotspot client list, so the count is best effort:
+Android doesn't give ordinary apps the hotspot client list. The most reliable source is the system's own
+"Hotspot is active · 1 device connected" notification:
 
-- **Where the phone allows it:** the app reads the system's neighbour table, which is exact.
+- **Exact (recommended):** turn on **Exact hotspot device count** in the app and grant WiFi Dot *Notification access*. The app then reads only the number from the system hotspot notification and updates instantly.
+- **Where the phone allows it:** the app reads the system's neighbour table, which is also exact.
 - **Otherwise:** the app sweeps the hotspot subnet with ping and TCP every 30 s. A device with a strict firewall may not be counted.
 
 While the hotspot is on, the app shows a **Hotspot diagnostics** card listing what each method found, so a wrong count can be traced.

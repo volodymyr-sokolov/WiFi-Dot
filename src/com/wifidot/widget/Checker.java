@@ -88,8 +88,20 @@ public final class Checker {
             Hotspot.noteUpstream(up == null ? "none" : (uc != null && uc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
                     ? "mobile" : uc != null && uc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? "Wi-Fi" : "other")
                     + ", validated " + (validated ? "yes" : "no") + ", probe " + (probe ? "OK" : "failed"));
-            hsCount = Hotspot.countClients(ctx, wifi != null ? clientIp(cm, wifi) : null);
-            p.edit().putString("hs_report", Hotspot.report()).apply();
+            int sys = HotspotNotifications.count(ctx);
+            String report;
+            if (sys >= 0) {
+                // Exact: from the system's own "N devices connected" hotspot notification.
+                hsCount = sys;
+                report = "Count: " + sys + " from the system hotspot notification ("
+                        + p.getString("hs_sys_source", "") + ")";
+            } else {
+                hsCount = Hotspot.countClients(ctx, wifi != null ? clientIp(cm, wifi) : null);
+                report = (HotspotNotifications.granted(ctx)
+                        ? "System notification: no device count found\n"
+                        : "System notification: Notification access is off\n") + Hotspot.report();
+            }
+            p.edit().putString("hs_report", report).apply();
             state = "hotspot"; label = devicesText(hsCount); url = "";
         } else if (wifi == null) {
             state = "nowifi"; label = "no Wi-Fi"; url = "";
