@@ -7,7 +7,7 @@ import android.content.IntentFilter;
 
 /**
  * Instant updates while the app process is alive: hotspot on/off, Wi-Fi on/off, connectivity
- * changes and screen-on. (Android doesn't deliver these to the manifest receiver on 8.0+,
+ * changes, screen on/off and unlock. (Android doesn't deliver these to the manifest receiver on 8.0+,
  * so they're registered at runtime; the poll alarm covers the time the process is asleep.)
  */
 final class Events {
@@ -24,10 +24,17 @@ final class Events {
         f.addAction("android.net.wifi.WIFI_STATE_CHANGED");
         f.addAction(android.net.ConnectivityManager.CONNECTIVITY_ACTION);
         f.addAction(Intent.ACTION_SCREEN_ON);
+        f.addAction(Intent.ACTION_SCREEN_OFF);
+        f.addAction(Intent.ACTION_USER_PRESENT);
         try {
             app.registerReceiver(new BroadcastReceiver() {
                 @Override public void onReceive(Context c, Intent i) {
                     if (isInitialStickyBroadcast()) return;
+                    String a = i.getAction();
+                    // Lock-screen card: ready before the screen comes back, gone as soon as the phone is unlocked.
+                    if (Intent.ACTION_USER_PRESENT.equals(a)) { LockScreen.cancel(app); return; }
+                    if (Intent.ACTION_SCREEN_OFF.equals(a)) { LockScreen.showNow(app); return; }
+                    if (Intent.ACTION_SCREEN_ON.equals(a)) LockScreen.update(app);
                     Checker.runAsync(app, null);
                 }
             }, f);

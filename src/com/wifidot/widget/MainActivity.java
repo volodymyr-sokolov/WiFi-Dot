@@ -54,7 +54,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private ImageView statusIcon;
     private TextView statusTitle, statusSub, statusTime;
     private TextView linkValue, latencyValue, downloadValue, testLabel;
-    private Switch swAlerts, swWidget, swTile, swStarlink;
+    private Switch swAlerts, swLock, swWidget, swTile, swStarlink;
     private TextView starlinkSub, locationSub, batterySub;
     private View addWidget, addTile;
     private boolean binding;
@@ -195,6 +195,20 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         });
         show.addView(divider());
 
+        swLock = new Switch(this);
+        show.addView(row(R.drawable.ic_ui_lock, "Lock screen",
+                text("Status card like the widget · only while the phone is locked", 13, cSub, false),
+                swLock, null));
+        swLock.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton v, boolean on) {
+                if (binding) return;
+                LockScreen.setEnabled(MainActivity.this, on);
+                if (on) askNotifications();
+                Checker.runAsync(MainActivity.this, null);
+            }
+        });
+        show.addView(divider());
+
         swWidget = new Switch(this);
         addWidget = smallPill("Add", new View.OnClickListener() {
             public void onClick(View v) { requestPinWidget(); }
@@ -319,6 +333,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
         binding = true;
         swAlerts.setChecked(Alerts.enabled(this));
+        swLock.setChecked(LockScreen.enabled(this));
         swWidget.setChecked(Prefs.widget(this));
         swTile.setChecked(Prefs.tile(this));
         boolean marked = Checker.markedStarlink(this, gw);
@@ -606,6 +621,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     /** Creates the pop-up channel (Android 13+ then asks once for notification permission). */
     private void askNotifications() {
         Alerts.ensureChannel(this);
+        if (LockScreen.enabled(this)) LockScreen.ensureChannel(this);
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != 0) {
             requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1);
         }

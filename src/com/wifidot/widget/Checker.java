@@ -128,6 +128,12 @@ public final class Checker {
         // Keep a light poll going, also without Wi-Fi: turning the hotspot on/off creates no network event.
         Poller.schedule(ctx);
         try { Alerts.afterCheck(ctx); } catch (Throwable ignored) {}
+        // Lock-screen card: keep it fresh while the screen is off; with the screen on, show it only while locked.
+        try { if (screenOff(ctx)) LockScreen.showNow(ctx); else LockScreen.update(ctx); } catch (Throwable ignored) {}
+    }
+
+    private static boolean screenOff(Context ctx) {
+        return !((android.os.PowerManager) ctx.getSystemService(Context.POWER_SERVICE)).isInteractive();
     }
 
     /** Network for the speed test: Wi-Fi, or the shared (mobile) connection when the hotspot is on. */
