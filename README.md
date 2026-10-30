@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v3.3)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v3.4)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -19,7 +19,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 Each can be turned on or off in the app (all on by default):
 
 - **Pop-up alerts**: a short message when the internet over Wi-Fi goes down or comes back, e.g. "No internet · Starlink". It shows the green or red status icon, disappears by itself and leaves no icon next to the clock. It only appears once two checks agree, never twice for the same status, and never while the phone's hotspot is on.
-- **Lock screen** (off by default): a status card like the widget, with the coloured icon and e.g. "Internet OK · Starlink". It's a silent notification that exists only while the phone is locked and is removed as soon as you unlock. Most phones don't let ordinary apps put widgets on the lock screen. On phones that do, the widget itself can also be placed there.
+- **Lock screen** (off by default): a status card like the widget, with the coloured icon and e.g. "Internet OK · Starlink". It's a regular notification that never makes a sound, never pops up and never wakes the screen. It exists only while the phone is locked and is removed as soon as you unlock. If it doesn't appear, use the **Settings** button next to the switch to allow WiFi Dot notifications on the lock screen. Most phones don't let ordinary apps put widgets on the lock screen. On phones that do, the widget itself can also be placed there.
 - **Home screen widget**: the icon in its colour, with the router name. Tap it for a small menu with **Details** (opens the app) and **Router main page**, or **Hotspot settings** while the hotspot is on.
 - **Quick Settings tile**: "Wi-Fi Internet". Tap it to open the router page.
 

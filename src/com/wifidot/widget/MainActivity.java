@@ -56,7 +56,8 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private TextView linkValue, latencyValue, downloadValue, testLabel;
     private Switch swAlerts, swLock, swWidget, swTile, swStarlink;
     private TextView starlinkSub, locationSub, batterySub;
-    private View addWidget, addTile;
+    private View addWidget, addTile, lockSettings;
+    private TextView lockSub;
     private boolean binding;
     private SpeedTest test;
 
@@ -196,15 +197,21 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         show.addView(divider());
 
         swLock = new Switch(this);
-        show.addView(row(R.drawable.ic_ui_lock, "Lock screen",
-                text("Status card like the widget · only while the phone is locked", 13, cSub, false),
-                swLock, null));
+        lockSub = text("", 13, cSub, false);
+        lockSettings = smallPill("Settings", new View.OnClickListener() {
+            public void onClick(View v) { openNotificationSettings(); }
+        });
+        show.addView(row(R.drawable.ic_ui_lock, "Lock screen", lockSub, pair(lockSettings, swLock), null));
         swLock.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(CompoundButton v, boolean on) {
                 if (binding) return;
                 LockScreen.setEnabled(MainActivity.this, on);
-                if (on) askNotifications();
+                if (on) {
+                    askNotifications();
+                    if (!LockScreen.allowed(MainActivity.this)) openNotificationSettings();
+                }
                 Checker.runAsync(MainActivity.this, null);
+                refresh();
             }
         });
         show.addView(divider());
@@ -334,6 +341,12 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         binding = true;
         swAlerts.setChecked(Alerts.enabled(this));
         swLock.setChecked(LockScreen.enabled(this));
+        boolean lockOn = LockScreen.enabled(this);
+        boolean lockOk = LockScreen.allowed(this);
+        lockSub.setText(!lockOn ? "Status card like the widget · only while the phone is locked"
+                : lockOk ? "On · lock the phone to see it. Not there? Tap Settings → allow on lock screen"
+                : "Blocked: tap Settings and allow WiFi Dot notifications");
+        lockSettings.setVisibility(lockOn ? View.VISIBLE : View.GONE);
         swWidget.setChecked(Prefs.widget(this));
         swTile.setChecked(Prefs.tile(this));
         boolean marked = Checker.markedStarlink(this, gw);
@@ -616,6 +629,15 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
             startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     Uri.parse("package:" + getPackageName())));
         } catch (Throwable ignored) {}
+    }
+
+    /** WiFi Dot's notification settings (where phones keep the per-app "lock screen" switch). */
+    private void openNotificationSettings() {
+        Intent i = new Intent("android.settings.APP_NOTIFICATION_SETTINGS")
+                .putExtra("android.provider.extra.APP_PACKAGE", getPackageName())
+                .putExtra("app_package", getPackageName())
+                .putExtra("app_uid", getApplicationInfo().uid);
+        try { startActivity(i); } catch (Throwable e) { openAppSettings(); }
     }
 
     /** Creates the pop-up channel (Android 13+ then asks once for notification permission). */
