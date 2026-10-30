@@ -35,7 +35,8 @@ final class LockScreen {
     static boolean allowed(Context ctx) {
         try {
             NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-            if (Build.VERSION.SDK_INT >= 24 && !nm.areNotificationsEnabled()) return false;
+            if (Build.VERSION.SDK_INT >= 24
+                    && !(Boolean) nm.getClass().getMethod("areNotificationsEnabled").invoke(nm)) return false;
             if (Build.VERSION.SDK_INT >= 26) {
                 Object chan = nm.getClass().getMethod("getNotificationChannel", String.class).invoke(nm, CHANNEL);
                 if (chan != null && (Integer) chan.getClass().getMethod("getImportance").invoke(chan) == 0) return false;
