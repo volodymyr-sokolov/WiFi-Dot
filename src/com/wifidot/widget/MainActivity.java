@@ -54,7 +54,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private ImageView statusIcon;
     private TextView statusTitle, statusSub, statusTime;
     private TextView linkValue, latencyValue, downloadValue, testLabel;
-    private Switch swWidget, swTile, swStarlink;
+    private Switch swAlerts, swWidget, swTile, swStarlink;
     private TextView starlinkSub, locationSub, batterySub;
     private View addWidget, addTile;
     private boolean binding;
@@ -84,6 +84,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         Checker.registerNetworkCallback(this);
         RefreshJob.schedule(this);
         Cleanup.run(this);
+        if (Alerts.enabled(this)) askNotifications();
         Checker.runAsync(this, null);
     }
 
@@ -180,6 +181,19 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         // ---- Where the status is shown
         col.addView(section("Show status in"));
         LinearLayout show = card(false);
+
+        swAlerts = new Switch(this);
+        show.addView(row(R.drawable.ic_ui_bell, "Pop-up alerts",
+                text("When the internet goes down or comes back · not while the hotspot is on", 13, cSub, false),
+                swAlerts, null));
+        swAlerts.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton v, boolean on) {
+                if (binding) return;
+                Alerts.setEnabled(MainActivity.this, on);
+                if (on) askNotifications();
+            }
+        });
+        show.addView(divider());
 
         swWidget = new Switch(this);
         addWidget = smallPill("Add", new View.OnClickListener() {
@@ -304,6 +318,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         updateLink();
 
         binding = true;
+        swAlerts.setChecked(Alerts.enabled(this));
         swWidget.setChecked(Prefs.widget(this));
         swTile.setChecked(Prefs.tile(this));
         boolean marked = Checker.markedStarlink(this, gw);
@@ -586,6 +601,14 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
             startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     Uri.parse("package:" + getPackageName())));
         } catch (Throwable ignored) {}
+    }
+
+    /** Creates the pop-up channel (Android 13+ then asks once for notification permission). */
+    private void askNotifications() {
+        Alerts.ensureChannel(this);
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != 0) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1);
+        }
     }
 
     @Override

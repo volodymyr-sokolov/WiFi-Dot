@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v3.0)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v3.1)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -16,14 +16,15 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ## Where the status appears
 
-Each can be turned on or off in the app (both on by default):
+Each can be turned on or off in the app (all on by default):
 
+- **Pop-up alerts**: a short message when the internet over Wi-Fi goes down or comes back, e.g. "No internet · Starlink". It disappears by itself and leaves no icon next to the clock. It only appears once two checks agree, never twice for the same status, and never while the phone's hotspot is on.
 - **Home screen widget**: the icon in its colour, with the router name. Tap it for a small menu with **Details** (opens the app) and **Router main page**, or **Hotspot settings** while the hotspot is on.
 - **Quick Settings tile**: "Wi-Fi Internet". Tap it to open the router page.
 
 **Starlink** opens `http://192.168.100.1`. Other routers open their gateway address. TP-Link, Keenetic, ASUS, MikroTik, Xiaomi and others are recognised by name.
 
-The app shows no notifications and no icon next to the clock. The system's own Wi-Fi and hotspot indicators cover that.
+Apart from the pop-up alerts, the app shows no notifications and no icon next to the clock. The system's own Wi-Fi and hotspot indicators cover that.
 
 ## Connection speed
 

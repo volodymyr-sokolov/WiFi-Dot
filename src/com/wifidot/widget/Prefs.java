@@ -4,7 +4,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
 
-/** User options: where the status is shown. Both on by default. */
+/** User options: where the status is shown. All on by default. */
 final class Prefs {
     private Prefs() {}
 
@@ -14,7 +14,7 @@ final class Prefs {
     static void setWidget(Context c, boolean on) { setComponent(c, WifiDotWidget.class, on); }
     static void setTile(Context c, boolean on) { setComponent(c, WifiTileService.class, on); }
 
-    static boolean anyOutputOn(Context c) { return widget(c) || tile(c); }
+    static boolean anyOutputOn(Context c) { return widget(c) || tile(c) || Alerts.enabled(c); }
 
     private static boolean componentOn(Context c, Class<?> cls) {
         int s = c.getPackageManager().getComponentEnabledSetting(new ComponentName(c, cls));

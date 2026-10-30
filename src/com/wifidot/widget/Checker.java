@@ -127,6 +127,7 @@ public final class Checker {
         }
         // Keep a light poll going, also without Wi-Fi: turning the hotspot on/off creates no network event.
         Poller.schedule(ctx);
+        try { Alerts.afterCheck(ctx); } catch (Throwable ignored) {}
     }
 
     /** Network for the speed test: Wi-Fi, or the shared (mobile) connection when the hotspot is on. */

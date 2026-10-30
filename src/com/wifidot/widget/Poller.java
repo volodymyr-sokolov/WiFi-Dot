@@ -25,6 +25,12 @@ final class Poller {
         am.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + delay, pi(ctx));
     }
 
+    /** One quick re-check, e.g. to confirm a status change before a pop-up. */
+    static void scheduleIn(Context ctx, long delayMs) {
+        AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+        am.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + delayMs, pi(ctx));
+    }
+
     static void cancel(Context ctx) {
         ((AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE)).cancel(pi(ctx));
     }
