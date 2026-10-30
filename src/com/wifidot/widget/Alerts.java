@@ -6,6 +6,10 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 
 /**
@@ -69,6 +73,10 @@ final class Alerts {
                 .setContentIntent(PendingIntent.getActivity(ctx, 0,
                         new Intent(ctx, OpenActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                         PendingIntent.FLAG_UPDATE_CURRENT | 0x04000000 /* IMMUTABLE */));
+        // Some phones show the app icon (always the green fan) instead of the small icon in pop-ups,
+        // so the status icon is also attached as the picture: green fan / red fan with "!".
+        Bitmap pic = statusPicture(ctx, state);
+        if (pic != null) b.setLargeIcon(pic);
         if (Build.VERSION.SDK_INT >= 26) {
             try { Notification.Builder.class.getMethod("setTimeoutAfter", long.class).invoke(b, SHOW_MS); }
             catch (Throwable ignored) {}
@@ -76,6 +84,27 @@ final class Alerts {
         try {
             ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).notify(ID, b.build());
         } catch (Throwable ignored) {}
+    }
+
+    /** The status icon in its colour on a soft round background, as a bitmap. */
+    static Bitmap statusPicture(Context ctx, String state) {
+        try {
+            int size = Math.round(64 * ctx.getResources().getDisplayMetrics().density);
+            int color = Checker.colorFor(state);
+            Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(bm);
+            Paint bg = new Paint(Paint.ANTI_ALIAS_FLAG);
+            bg.setColor((color & 0x00FFFFFF) | 0x26000000); // same colour, 15% opacity
+            c.drawCircle(size / 2f, size / 2f, size / 2f, bg);
+            Drawable d = ctx.getDrawable(Checker.iconFor(state)).mutate();
+            d.setTint(color);
+            int pad = Math.round(size * 0.2f);
+            d.setBounds(pad, pad, size - pad, size - pad);
+            d.draw(c);
+            return bm;
+        } catch (Throwable e) {
+            return null;
+        }
     }
 
     /**
