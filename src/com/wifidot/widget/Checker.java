@@ -213,6 +213,17 @@ public final class Checker {
         try { Alerts.afterCheck(ctx); } catch (Throwable ignored) {}
     }
 
+    /**
+     * Network for the quality measurement: the Wi-Fi, or the shared upstream while the hotspot is
+     * on; null otherwise (never rate mobile data when Wi-Fi is simply off).
+     */
+    static android.net.Network qualityNetwork(Context ctx) {
+        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+        Network w = findWifi(cm);
+        if (w != null) return w;
+        return Hotspot.isOn(ctx) ? cm.getActiveNetwork() : null;
+    }
+
     /** Network for the speed test: Wi-Fi, or the shared (mobile) connection when the hotspot is on. */
     static Network testNetwork(Context ctx) {
         ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -361,18 +372,6 @@ public final class Checker {
 
 
 
-    private static boolean tcpOpen(Network net, String host, int port, int timeout) {
-        Socket s = null;
-        try {
-            s = net.getSocketFactory().createSocket();
-            s.connect(new InetSocketAddress(host, port), timeout);
-            return true;
-        } catch (Throwable e) {
-            return false;
-        } finally {
-            try { if (s != null) s.close(); } catch (Throwable ignored) {}
-        }
-    }
 
     /** Server header + start of the page, lower-cased, or null. */
     private static String fetchHead(Network net, String url, int timeout) {

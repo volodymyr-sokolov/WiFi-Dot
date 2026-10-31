@@ -56,6 +56,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private ImageView qualityArrow;
     private static final Quality QUALITY = new Quality();
     private volatile boolean measuring;
+    private volatile int loopGen;   // each loop runs only while its generation is current
     private Quality.Result lastQuality;
     private Switch swAlerts, swLock, swWidget, swTile;
     private TextView batterySub;
@@ -106,6 +107,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         prefs.unregisterOnSharedPreferenceChangeListener(this);
         handler.removeCallbacks(ticker);
         measuring = false;
+        loopGen++;   // an old loop still inside a round stops when it finishes that round
         super.onPause();
     }
 
@@ -442,15 +444,18 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private void startQualityLoop() {
         if (measuring) return;
         measuring = true;
+        final int gen = ++loopGen;
+        final Context app = getApplicationContext();
         new Thread(new Runnable() { public void run() {
             String lastNet = null;
-            while (measuring) {
-                android.net.Network net = Checker.testNetwork(MainActivity.this);
+            while (measuring && gen == loopGen) {
+                android.net.Network net = Checker.qualityNetwork(app);
                 String key = net == null ? "" : net.toString();
                 if (!key.equals(lastNet)) { QUALITY.reset(); lastNet = key; }   // new network: start over
                 final Quality.Result res = net == null ? null : QUALITY.measure(net);
+                if (gen != loopGen) break;
                 handler.post(new Runnable() { public void run() { lastQuality = res; showQuality(); } });
-                for (int i = 0; i < 100 && measuring; i++) {
+                for (int i = 0; i < 100 && measuring && gen == loopGen; i++) {
                     try { Thread.sleep(100); } catch (InterruptedException e) { break; }
                 }
             }
@@ -470,7 +475,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
             qLatency.setText("—"); qJitter.setText("—"); qLoss.setText("—"); qNote.setText("");
         } else if (q.received == 0) {
             level = 1;
-            qualityValue.setText("Bad · 0/100 · no replies");
+            qualityValue.setText("Very bad · 0/100 · no replies");
             qualityValue.setTextColor(Quality.COLORS[1]);
             qLatency.setText("—"); qJitter.setText("—"); qLoss.setText("100%");
             qNote.setText(q.sent + " packets to " + q.target + ", none came back");
@@ -481,7 +486,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
             qLatency.setText(String.format(Locale.US, "%.0f ms", q.latencyMs));
             qJitter.setText(String.format(Locale.US, "%.0f ms", q.jitterMs));
             qLoss.setText(q.lossPct == 0 ? "0%" : String.format(Locale.US, "%.1f%%", q.lossPct));
-            qNote.setText("Last " + q.sent + " packets to " + q.target
+            qNote.setText("DNS round trip, last " + q.sent + " packets to " + q.target
                     + " · updates every 10 s while this screen is open");
         }
         for (int i = 0; i < 5; i++) {

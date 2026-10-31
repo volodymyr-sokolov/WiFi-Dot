@@ -32,14 +32,14 @@ final class Quality {
         }
     }
 
-    static final String[] LABELS = {"Unknown", "Bad", "Poor", "Fair", "Good", "Excellent"};
+    static final String[] LABELS = {"Unknown", "Very bad", "Bad", "Fair", "Good", "Excellent"};
     static final int[] COLORS = {0xFF9E9E9E, 0xFFE53935, 0xFFFB8C00, 0xFFF9C80E, 0xFF7CB342, 0xFF2ECC40};
 
     private static final String[] RESOLVERS = {"1.1.1.1", "8.8.8.8"};
     private static final int BURST = 15;              // packets per measurement round
     private static final int SPACING_MS = 100;        // between packets
     private static final int TIMEOUT_MS = 800;        // a reply later than this counts as lost
-    private static final int WINDOW = 60;             // packets pooled for the statistics (~4 rounds)
+    private static final int WINDOW = 100;            // packets pooled for the statistics (~7 rounds)
 
     /** Rolling window: RTT in ms, or -1 for a lost packet. Oldest first. */
     private final List<Double> window = new ArrayList<Double>();
@@ -72,7 +72,7 @@ final class Quality {
             InetAddress dst = InetAddress.getByName(host);   // numeric: no DNS lookup
             sock.setSoTimeout(TIMEOUT_MS);
             byte[] buf = new byte[512];
-            for (int i = 0; i < BURST; i++) {
+            for (int i = -1; i < BURST; i++) {   // i = -1: untimed warm-up (Wi-Fi power save may drop it)
                 int id = rnd.nextInt(0xFFFF);
                 byte[] q = query(id);
                 long t0 = System.nanoTime();
@@ -86,7 +86,10 @@ final class Quality {
                         sock.setSoTimeout((int) Math.max(1, left));
                         DatagramPacket r = new DatagramPacket(buf, buf.length);
                         sock.receive(r);
-                        if (r.getLength() >= 2 && ((buf[0] & 0xFF) << 8 | (buf[1] & 0xFF)) == id) {
+                        boolean ours = r.getLength() >= 12 && dst.equals(r.getAddress())
+                                && ((buf[0] & 0xFF) << 8 | (buf[1] & 0xFF)) == id
+                                && (buf[2] & 0x80) != 0;   // QR bit: a response
+                        if (ours) {
                             rtt = (System.nanoTime() - t0) / 1e6;
                             break;
                         } // else: a late reply to an earlier packet — keep waiting for ours
@@ -96,7 +99,7 @@ final class Quality {
                 } catch (Throwable e) {
                     rtt = -1;
                 }
-                out.add(rtt);
+                if (i >= 0) out.add(rtt);
                 long spent = (System.nanoTime() - t0) / 1_000_000L;
                 if (spent < SPACING_MS) try { Thread.sleep(SPACING_MS - spent); } catch (InterruptedException ignored) {}
             }
@@ -136,7 +139,8 @@ final class Quality {
      * loss = lost / sent. Rating:
      *  - from latency: ≤30 ms 5, ≤60 ms 4, ≤100 ms 3, ≤200 ms 2, else 1;
      *  - jitter ≥30 ms costs 1 point, ≥80 ms 2 points (a low ping with jumping jitter means lag);
-     *  - any loss above 1% caps the rating at "Bad": 2, or 1 from 10% loss;
+     *  - any loss above 1% (at least 2 lost packets) caps the rating at "Bad" (2), or
+     *    "Very bad" (1) from 10% loss;
      *  - the 0–100 score is continuous and kept inside the band of the rating.
      */
     static Result evaluate(List<Double> samples, String target) {
@@ -158,7 +162,9 @@ final class Quality {
             for (int i = 1; i < received; i++) jitter += Math.abs(ok.get(i) - ok.get(i - 1));
             jitter /= (received - 1);
         }
-        int[] r = rate(latency, jitter, loss);
+        // One lost packet among few is noise (public resolvers drop the odd query): the loss rule
+        // needs at least two lost packets; then any loss above 1% makes the rating "Bad".
+        int[] r = rate(latency, jitter, sent - received >= 2 ? loss : 0);
         return new Result(sent, received, latency, jitter, loss, r[0], r[1], target);
     }
 
