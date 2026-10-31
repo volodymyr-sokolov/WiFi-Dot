@@ -37,6 +37,9 @@ public final class Checker {
     private static final Object LOCK = new Object();
     private static boolean running = false;
     private static boolean again = false;
+    /** Callers waiting for the current check (their receiver/job stays alive until it's done). */
+    private static final java.util.List<Runnable> waiting = new java.util.ArrayList<Runnable>();
+    private static boolean callbackRegistered = false;
 
     private Checker() {}
 
@@ -44,35 +47,49 @@ public final class Checker {
     static void runAsync(final Context ctx, final Runnable done) {
         final Context app = ctx.getApplicationContext();
         synchronized (LOCK) {
-            if (running) { again = true; if (done != null) done.run(); return; }
+            if (done != null) waiting.add(done);
+            if (running) { again = true; return; }   // coalesce: one more pass after the current one
             running = true;
         }
         new Thread(new Runnable() {
             @Override public void run() {
-                try {
-                    while (true) {
-                        try { checkNow(app); } catch (Throwable ignored) {}
-                        synchronized (LOCK) {
-                            if (!again) { running = false; break; }
-                            again = false;
+                java.util.List<Runnable> finished;
+                while (true) {
+                    try { checkNow(app); } catch (Throwable ignored) {}
+                    synchronized (LOCK) {
+                        if (!again) {
+                            running = false;
+                            finished = new java.util.ArrayList<Runnable>(waiting);
+                            waiting.clear();
+                            break;
                         }
+                        again = false;
                     }
-                } finally {
-                    if (done != null) done.run();
                 }
+                for (Runnable r : finished) { try { r.run(); } catch (Throwable ignored) {} }
             }
         }, "wifidot-check").start();
     }
 
-    /** Check; redraws widget/icon/tile only if something changed. */
+    /** Check; redraws widget/tile only if something changed. The next poll is always scheduled. */
     static synchronized void checkNow(Context ctx) {
-        registerNetworkCallback(ctx);
+        try {
+            checkBody(ctx);
+        } finally {
+            try { Poller.schedule(ctx); } catch (Throwable ignored) {}
+        }
+    }
+
+    private static void checkBody(Context ctx) {
+        Cleanup.run(ctx);
+        registerCallbackOnce(ctx);
         Events.register(ctx);
         ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
         Network wifi = findWifi(cm);
         SharedPreferences p = ctx.getSharedPreferences(PREFS, 0);
 
-        String state, label, url, gw = "";
+        String state, label, url, gw = "", netKey = "";
+        boolean wifiValidated = false;
         boolean hotspot = Hotspot.isOn(ctx);
         String hsNet = "";
         if (hotspot) {
@@ -87,10 +104,13 @@ public final class Checker {
             state = "nowifi"; label = "no Wi-Fi"; url = "";
         } else {
             boolean online = hasInternet(wifi);
+            NetworkCapabilities wc = cm.getNetworkCapabilities(wifi);
+            wifiValidated = wc != null && wc.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
             String g = gateway(ctx, cm, wifi);
             gw = g == null ? "" : g;
+            netKey = wifi.toString() + "@" + gw;   // same router on a different network → re-detect
             long now = System.currentTimeMillis();
-            boolean cached = gw.equals(p.getString("gw", null))
+            boolean cached = netKey.equals(p.getString("net_key", null))
                     && now - p.getLong("detected2", 0) < 10 * 60 * 1000L
                     && p.getString("url", "").length() > 0;
             if (cached) {
@@ -113,27 +133,28 @@ public final class Checker {
             state = online ? "online" : "offline";
         }
 
-        boolean changed = !state.equals(p.getString("state", ""))
+        String prevState = p.getString("state", "");
+        boolean wifiState = "online".equals(state) || "offline".equals(state);
+        if (wifiState && (!("online".equals(prevState) || "offline".equals(prevState))
+                || !netKey.equals(p.getString("net_key", "")))) {
+            p.edit().putLong("wifi_since", System.currentTimeMillis()).apply();   // just (re)connected
+        }
+        boolean changed = !state.equals(prevState)
                 || !hsNet.equals(p.getString("hs_net", ""))
                 || !label.equals(p.getString("label", ""))
                 || !url.equals(p.getString("url", ""));
         p.edit().putString("state", state).putString("label", label).putString("url", url)
-                .putString("gw", gw).putString("hs_net", hsNet)
+                .putString("gw", gw).putString("net_key", netKey).putString("hs_net", hsNet)
+                .putBoolean("wifi_validated", wifiValidated)
                 .putLong("latency", "online".equals(state) || "online".equals(hsNet) ? lastLatencyMs : -1)
                 .putLong("time", System.currentTimeMillis()).apply();
         if (changed || !p.getBoolean("rendered", false)) {
             p.edit().putBoolean("rendered", true).apply();
             render(ctx);
         }
-        // Keep a light poll going, also without Wi-Fi: turning the hotspot on/off creates no network event.
-        Poller.schedule(ctx);
+        // Lock-screen card first (so an unlocked phone never shows it next to an alert), then alerts.
+        try { LockScreen.update(ctx); } catch (Throwable ignored) {}
         try { Alerts.afterCheck(ctx); } catch (Throwable ignored) {}
-        // Lock-screen card: keep it fresh while the screen is off; with the screen on, show it only while locked.
-        try { if (screenOff(ctx)) LockScreen.showNow(ctx); else LockScreen.update(ctx); } catch (Throwable ignored) {}
-    }
-
-    private static boolean screenOff(Context ctx) {
-        return !((android.os.PowerManager) ctx.getSystemService(Context.POWER_SERVICE)).isInteractive();
     }
 
     /** Network for the speed test: Wi-Fi, or the shared (mobile) connection when the hotspot is on. */
@@ -152,17 +173,26 @@ public final class Checker {
 
     @SuppressWarnings("deprecation")
     private static Network findWifi(ConnectivityManager cm) {
+        Network active = cm.getActiveNetwork();
+        if (active != null && isWifiClient(cm.getNetworkCapabilities(active))) return active;
+        Network best = null;
         for (Network n : cm.getAllNetworks()) {
             NetworkCapabilities c = cm.getNetworkCapabilities(n);
-            // Wi-Fi client connections only: the hotspot / Wi-Fi Direct show up as local-only
-            // Wi-Fi networks without the INTERNET capability — those are not "Wi-Fi without internet".
-            if (c != null && c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-                    && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-                    && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                return n;
-            }
+            if (!isWifiClient(c)) continue;
+            // With two Wi-Fi client networks (dual Wi-Fi), pick consistently: the unrestricted one.
+            if (best == null || c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) best = n;
         }
-        return null;
+        return best;
+    }
+
+    /**
+     * A Wi-Fi client connection. The hotspot / Wi-Fi Direct show up as local-only Wi-Fi networks
+     * without the INTERNET capability — those are not "Wi-Fi without internet".
+     */
+    private static boolean isWifiClient(NetworkCapabilities c) {
+        return c != null && c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
     }
 
     @SuppressWarnings("deprecation")
@@ -238,11 +268,11 @@ public final class Checker {
     }
 
     private static boolean isStarlink(final Network wifi, String gw) {
-        // The Starlink dish is always reachable at 192.168.100.1 (also through the Starlink router).
-        // Probe the dish gRPC ports and web port in parallel — any answer means Starlink.
-        // Plus the Starlink router's own gRPC port 9000 (usually 192.168.1.1:9000).
-        final String[] hosts = {"192.168.100.1", "192.168.100.1", "192.168.100.1", gw, gw};
-        final int[] ports = {9200, 9201, 80, 9000, 9001};
+        // The Starlink dish is always reachable at 192.168.100.1 (also through the Starlink router)
+        // and answers on its gRPC ports 9200/9201. Port 80 alone is not enough: 192.168.100.1 is
+        // also the usual address of cable modems; router ports 9000/9001 are common on NAS boxes.
+        final String[] hosts = {"192.168.100.1", "192.168.100.1"};
+        final int[] ports = {9200, 9201};
         final boolean[] ok = {false};
         Thread[] ts = new Thread[ports.length];
         for (int i = 0; i < ports.length; i++) {
@@ -351,7 +381,7 @@ public final class Checker {
             m.updateAppWidget(new ComponentName(ctx, WifiDotWidget.class), rv);
         } catch (Throwable ignored) {} // widget turned off
 
-        WifiTileService.requestUpdate(ctx);
+        if (Build.VERSION.SDK_INT >= 24) WifiTileService.requestUpdate(ctx);
     }
 
     static final int GREEN = 0xFF2ECC40, RED = 0xFFFF3B30, GREY = 0xFF9E9E9E, BLUE = 0xFF2F80ED;
@@ -375,6 +405,19 @@ public final class Checker {
     }
 
     /** Network-change subscription — the system wakes NetReceiver on every Wi-Fi change. */
+    /**
+     * Register the Wi-Fi network callback once per process. Re-registering on every check made
+     * Android immediately re-deliver "network available" → another check → an endless loop.
+     * NetReceiver also ignores the one delivery that follows each registration.
+     */
+    static synchronized void registerCallbackOnce(Context ctx) {
+        if (callbackRegistered) return;
+        callbackRegistered = true;
+        ctx.getSharedPreferences(PREFS, 0).edit()
+                .putLong("cb_registered_at", android.os.SystemClock.elapsedRealtime()).apply();
+        registerNetworkCallback(ctx);
+    }
+
     static void registerNetworkCallback(Context ctx) {
         try {
             ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);

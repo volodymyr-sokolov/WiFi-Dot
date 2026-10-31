@@ -21,6 +21,7 @@ public class WifiTileService extends TileService {
     @Override public void onTileAdded() { refresh(); }
 
     @Override public void onStartListening() {
+        LockScreen.update(this);   // shade opened → remove a stale lock-screen card at once
         refresh();
         Checker.runAsync(this, null); // result arrives via requestUpdate
     }

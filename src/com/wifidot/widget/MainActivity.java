@@ -478,7 +478,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
             Executor ex = new Executor() { public void execute(Runnable r) { handler.post(r); } };
             sbmClass.getMethod("requestAddTileService", ComponentName.class, CharSequence.class, Icon.class,
                     Executor.class, consumer)
-                    .invoke(sbm, new ComponentName(this, WifiTileService.class), "Wi-Fi Internet",
+                    .invoke(sbm, new ComponentName(getPackageName(), Prefs.TILE_CLASS), "Wi-Fi Internet",
                             Icon.createWithResource(this, R.drawable.ic_stat_ok), ex, cb);
         } catch (Throwable ignored) {}
     }

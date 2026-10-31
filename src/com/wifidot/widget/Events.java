@@ -32,8 +32,8 @@ final class Events {
                     if (isInitialStickyBroadcast()) return;
                     String a = i.getAction();
                     // Lock-screen card: ready before the screen comes back, gone as soon as the phone is unlocked.
-                    if (Intent.ACTION_USER_PRESENT.equals(a)) { LockScreen.cancel(app); return; }
-                    if (Intent.ACTION_SCREEN_OFF.equals(a)) { LockScreen.showNow(app); return; }
+                    if (Intent.ACTION_USER_PRESENT.equals(a)) { LockScreen.unlocked(app); return; }
+                    if (Intent.ACTION_SCREEN_OFF.equals(a)) { LockScreen.update(app); return; }
                     if (Intent.ACTION_SCREEN_ON.equals(a)) LockScreen.update(app);
                     Checker.runAsync(app, null);
                 }

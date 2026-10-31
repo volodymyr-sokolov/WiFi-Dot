@@ -14,11 +14,12 @@ final class Cleanup {
         if (ctx.getSharedPreferences(Checker.PREFS, 0).getBoolean("cleaned_v3", false)) return;
         try {
             NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-            nm.cancelAll();
+            for (int id : new int[]{1, 2}) nm.cancel(id);   // old status icon + old single-ID alert
             if (Build.VERSION.SDK_INT >= 26) {
                 List<?> chans = (List<?>) nm.getClass().getMethod("getNotificationChannels").invoke(nm);
                 for (Object ch : chans) {
                     String id = (String) ch.getClass().getMethod("getId").invoke(ch);
+                    if (id.equals("alerts_v2") || id.equals("lockscreen_v2")) continue;   // current ones
                     nm.getClass().getMethod("deleteNotificationChannel", String.class).invoke(nm, id);
                 }
             }

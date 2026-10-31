@@ -55,16 +55,35 @@ final class LockScreen {
     }
 
     /** Show the card if enabled and the phone is locked; otherwise remove it. */
-    static void update(Context ctx) {
-        if (!enabled(ctx) || !locked(ctx)) { cancel(ctx); return; }
-        try {
-            ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).notify(ID, build(ctx));
-        } catch (Throwable ignored) {}
+    private static final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final long UNLOCK_QUIET_MS = 5000;   // never post right after an unlock
+    private static final long EXPIRE_MS = 15 * 60_000L;  // a card nobody refreshed removes itself
+    private static volatile long lastUnlock = 0;
+
+    /**
+     * Show, refresh or remove the card. Runs on the main thread, in order with the screen/unlock
+     * broadcasts, and re-checks the conditions at the moment of posting — so a slow background
+     * check can never put the card back after the phone was unlocked.
+     *  - screen off  → show (the phone may lock a few seconds later)
+     *  - screen on   → show only while locked, otherwise remove
+     */
+    static void update(final Context ctx) {
+        final Context app = ctx.getApplicationContext();
+        Runnable r = new Runnable() { public void run() { decide(app); } };
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) r.run(); else MAIN.post(r);
     }
 
-    /** Screen just turned off: post the card even if the lock hasn't engaged yet (it may lock after a delay). */
-    static void showNow(Context ctx) {
-        if (!enabled(ctx)) return;
+    /** The phone was just unlocked. */
+    static void unlocked(Context ctx) {
+        lastUnlock = android.os.SystemClock.elapsedRealtime();
+        cancel(ctx);
+    }
+
+    private static void decide(Context ctx) {
+        boolean interactive = ((android.os.PowerManager) ctx.getSystemService(Context.POWER_SERVICE)).isInteractive();
+        boolean justUnlocked = android.os.SystemClock.elapsedRealtime() - lastUnlock < UNLOCK_QUIET_MS;
+        boolean show = enabled(ctx) && !justUnlocked && (!interactive || locked(ctx));
+        if (!show) { cancel(ctx); return; }
         try {
             ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).notify(ID, build(ctx));
         } catch (Throwable ignored) {}
@@ -109,6 +128,10 @@ final class LockScreen {
         b.setGroup("wifidot.lockscreen");
         if (Build.VERSION.SDK_INT >= 26) {
             try { Notification.Builder.class.getMethod("setGroupAlertBehavior", int.class).invoke(b, 1); }
+            catch (Throwable ignored) {}
+        }
+        if (Build.VERSION.SDK_INT >= 26) {   // removes itself if the app can't refresh/remove it
+            try { Notification.Builder.class.getMethod("setTimeoutAfter", long.class).invoke(b, EXPIRE_MS); }
             catch (Throwable ignored) {}
         }
         Bitmap pic = Alerts.statusPicture(ctx, state);   // same coloured icon as the widget
