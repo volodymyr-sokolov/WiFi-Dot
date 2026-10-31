@@ -36,7 +36,10 @@ Apart from the pop-up alerts and the optional lock-screen card, the app shows no
 The main screen shows:
 
 - the Wi-Fi link rate, band and signal strength
-- the latency of each internet check
+- **Connection quality**: a rating from 1 to 5 (Bad, Poor, Fair, Good, Excellent) with a colour scale and a score out of 100. Tap it to see latency, jitter and packet loss. It's measured while the screen is open: every 10 s the app sends 15 tiny UDP packets (DNS queries to 1.1.1.1, or 8.8.8.8 if that's blocked) and pools the last 60. UDP is used because it shows real packet loss, which a web request hides by retrying.
+  - Latency (median): ≤30 ms → 5, ≤60 → 4, ≤100 → 3, ≤200 → 2, slower → 1.
+  - Jitter of 30 ms or more costs 1 point, 80 ms or more costs 2. A 20 ms ping with jitter jumping to 100 ms means lag, so it rates "Fair" rather than "Excellent".
+  - Packet loss above 1% caps the rating at 2 ("Bad"), and 10% or more makes it 1, however low the ping.
 - an on-demand download test: 4 parallel streams for 8 s, about 30–100 MB
 
 ## How it works
@@ -44,11 +47,7 @@ The main screen shows:
 - Internet is checked with real HTTP probes (`generate_204`) bound to the Wi-Fi network.
 - Checks run when Wi-Fi or the hotspot changes, when the screen turns on, and on light background alarms: every 20 s with the screen on, every 2 min with it off. A screen-off alarm doesn't wake the phone; it fires when the phone next wakes.
 - While the hotspot is on, the app checks the connection being shared (usually mobile data).
-- Starlink is detected by any of:
-  - the dish (`192.168.100.1`, ports 9200/9201/80)
-  - the Starlink router gRPC port (`:9000`)
-  - the network name (needs location permission)
-  - a manual "This network is Starlink" switch
+- Starlink is detected automatically, without looking at the network name. The app sends the SpaceX device API's `get_status` request (gRPC-web, `SpaceX.API.Device.Device/Handle`) to the dish at `192.168.100.1:9201` and to the router at `<gateway>:9001`, and accepts only a genuine gRPC reply. As a fallback, the dish's native gRPC port `9200` being open also counts. The app needs no location permission.
 - If the phone blocks the app's background network access, the app doesn't report an outage. It keeps the last result for up to 2 minutes, then shows grey "Checking…". The same goes for failures while Android still says the Wi-Fi works: the app reports an outage only if they last a full minute.
 - For reliable background checks, turn off battery optimization for WiFi Dot. The app has a shortcut for this.
 - Known limitation: while the app isn't running, Android only wakes it when a Wi-Fi network connects, not when one drops. A drop is noticed at the next check, which can be up to 20 s with the screen on, or when you next wake the phone.

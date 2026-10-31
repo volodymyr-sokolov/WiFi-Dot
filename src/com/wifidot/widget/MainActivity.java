@@ -36,14 +36,11 @@ import android.widget.TextView;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.HashSet;
 import java.util.Locale;
-import java.util.Set;
 import java.util.concurrent.Executor;
 
 /** Main screen: live status, connection speed, where the status is shown, settings, icon legend. */
 public class MainActivity extends Activity implements SharedPreferences.OnSharedPreferenceChangeListener {
-    private static final String LOCATION = "android.permission.ACCESS_FINE_LOCATION";
 
     private int cBg, cCard, cText, cSub, cIcon, cRipple, cPill, cLine;
     private float dp;
@@ -53,9 +50,15 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     private ImageView statusIcon;
     private TextView statusTitle, statusSub, statusTime;
-    private TextView linkValue, latencyValue, downloadValue, testLabel;
-    private Switch swAlerts, swLock, swWidget, swTile, swStarlink;
-    private TextView starlinkSub, locationSub, batterySub;
+    private TextView linkValue, downloadValue, testLabel;
+    private TextView qualityValue, qLatency, qJitter, qLoss, qNote;
+    private LinearLayout qualityScale, qualityDetails;
+    private ImageView qualityArrow;
+    private static final Quality QUALITY = new Quality();
+    private volatile boolean measuring;
+    private Quality.Result lastQuality;
+    private Switch swAlerts, swLock, swWidget, swTile;
+    private TextView batterySub;
     private View addWidget, addTile, lockSettings;
     private TextView lockSub;
     private boolean binding;
@@ -95,12 +98,14 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         prefs.registerOnSharedPreferenceChangeListener(this);
         refresh();
         handler.post(ticker);
+        startQualityLoop();
     }
 
     @Override
     protected void onPause() {
         prefs.unregisterOnSharedPreferenceChangeListener(this);
         handler.removeCallbacks(ticker);
+        measuring = false;
         super.onPause();
     }
 
@@ -166,11 +171,11 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         col.addView(section("Connection speed"));
         LinearLayout speed = card(false);
         linkValue = text("—", 13, cSub, false);
-        latencyValue = text("—", 13, cSub, false);
+
         downloadValue = text("Not tested yet", 13, cSub, false);
         speed.addView(row(R.drawable.ic_ui_link, "Wi-Fi link", linkValue, null, null));
         speed.addView(divider());
-        speed.addView(row(R.drawable.ic_ui_timer, "Latency", latencyValue, null, null));
+        speed.addView(qualityRow());
         speed.addView(divider());
         View testPill = smallPill("Test", new View.OnClickListener() {
             public void onClick(View v) { toggleSpeedTest(); }
@@ -253,33 +258,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         // ---- Settings
         col.addView(section("Settings"));
         LinearLayout settings = card(false);
-        swStarlink = new Switch(this);
-        starlinkSub = text("", 13, cSub, false);
-        settings.addView(row(R.drawable.ic_ui_router, "This network is Starlink", starlinkSub, swStarlink, null));
-        swStarlink.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            public void onCheckedChanged(CompoundButton v, boolean on) {
-                if (binding) return;
-                String gw = prefs.getString("gw", "");
-                if (gw.length() == 0) return;
-                Set<String> set = new HashSet<String>(prefs.getStringSet("starlink_gws", new HashSet<String>()));
-                if (on) set.add(gw); else set.remove(gw);
-                prefs.edit().putStringSet("starlink_gws", set).putLong("detected2", 0).apply();
-                Checker.runAsync(MainActivity.this, null);
-            }
-        });
-
-        locationSub = text("", 13, cSub, false);
-        settings.addView(divider());
-        settings.addView(row(R.drawable.ic_ui_location, "Detect Starlink by network name", locationSub,
-                chevron(), new View.OnClickListener() {
-                    public void onClick(View v) {
-                        if (checkSelfPermission(LOCATION) != 0) requestPermissions(new String[]{LOCATION}, 2);
-                        else openAppSettings();
-                    }
-                }));
-
         batterySub = text("", 13, cSub, false);
-        settings.addView(divider());
         settings.addView(row(R.drawable.ic_ui_battery, "Battery optimization", batterySub, chevron(),
                 new View.OnClickListener() {
                     public void onClick(View v) { requestBatteryExemption(); }
@@ -328,8 +307,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                 : (host.length() > 0 && !host.equals(label) ? label + " · " + host : label));
         updateTime();
 
-        long lat = prefs.getLong("latency", -1);
-        latencyValue.setText(lat >= 0 ? lat + " ms" : ("online".equals(state) || hsOnline ? "—" : "No internet"));
+        showQuality();
         if (test == null) {
             float dl = prefs.getFloat("dl_mbps", -1);
             long t = prefs.getLong("dl_time", 0);
@@ -349,17 +327,10 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         lockSettings.setVisibility(lockOn ? View.VISIBLE : View.GONE);
         swWidget.setChecked(Prefs.widget(this));
         swTile.setChecked(Prefs.tile(this));
-        boolean marked = Checker.markedStarlink(this, gw);
-        swStarlink.setChecked(marked);
-        swStarlink.setEnabled(gw.length() > 0);
         binding = false;
         addWidget.setVisibility(Prefs.widget(this) && canPinWidget() ? View.VISIBLE : View.GONE);
         addTile.setVisibility(Prefs.tile(this) && Build.VERSION.SDK_INT >= 33 ? View.VISIBLE : View.GONE);
 
-        starlinkSub.setText(gw.length() == 0 ? "Connect to Wi-Fi first"
-                : "Gateway " + gw + (marked ? " · opens 192.168.100.1" : " · use if not detected"));
-        locationSub.setText(checkSelfPermission(LOCATION) == 0
-                ? "On · also needs Location turned on" : "Needs location access");
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         batterySub.setText(pm.isIgnoringBatteryOptimizations(getPackageName())
                 ? "Off for WiFi Dot ✓" : "Turn off so background checks keep running");
@@ -397,6 +368,125 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     private static int intCall(Object o, String m) {
         try { return (Integer) o.getClass().getMethod(m).invoke(o); } catch (Throwable e) { return -1; }
+    }
+
+    // ---------------------------------------------------------------- connection quality
+
+    /** "Connection quality" row: rating + 0–100 score + five-step colour scale; tap to expand details. */
+    private View qualityRow() {
+        LinearLayout box = vbox();
+        LinearLayout r = hbox();
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(px(18), px(12), px(14), px(12));
+        r.addView(icon(R.drawable.ic_ui_timer, cIcon, 24));
+        LinearLayout t = vbox();
+        t.setPadding(px(16), 0, px(8), 0);
+        t.addView(text("Connection quality", 16, cText, false));
+        LinearLayout line = hbox();
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        line.setPadding(0, px(3), 0, 0);
+        qualityValue = text("Measuring…", 13, cSub, true);
+        line.addView(qualityValue);
+        qualityScale = hbox();
+        qualityScale.setPadding(px(10), 0, 0, 0);
+        for (int i = 0; i < 5; i++) {
+            View seg = new View(this);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px(14), px(6));
+            lp.rightMargin = px(3);
+            seg.setLayoutParams(lp);
+            seg.setBackground(round(cLine, 3));
+            qualityScale.addView(seg);
+        }
+        line.addView(qualityScale);
+        t.addView(line);
+        r.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
+        qualityArrow = icon(R.drawable.ic_ui_chevron, cSub, 22);
+        qualityArrow.setRotation(90);   // pointing down = collapsed
+        r.addView(qualityArrow);
+        r.setBackground(new RippleDrawable(ColorStateList.valueOf(cRipple), null, new ColorDrawable(0xFFFFFFFF)));
+        box.addView(r);
+
+        qualityDetails = vbox();
+        qualityDetails.setPadding(px(58), 0, px(18), px(12));
+        qLatency = detailLine(qualityDetails, "Latency");
+        qJitter = detailLine(qualityDetails, "Jitter");
+        qLoss = detailLine(qualityDetails, "Packet loss");
+        qNote = text("", 12, cSub, false);
+        qNote.setPadding(0, px(6), 0, 0);
+        qualityDetails.addView(qNote);
+        qualityDetails.setVisibility(View.GONE);
+        box.addView(qualityDetails);
+
+        r.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                boolean open = qualityDetails.getVisibility() != View.VISIBLE;
+                qualityDetails.setVisibility(open ? View.VISIBLE : View.GONE);
+                qualityArrow.animate().rotation(open ? -90 : 90).setDuration(150).start();
+            }
+        });
+        return box;
+    }
+
+    private TextView detailLine(LinearLayout parent, String name) {
+        LinearLayout l = hbox();
+        l.setPadding(0, px(3), 0, px(3));
+        TextView n = text(name, 14, cSub, false);
+        l.addView(n, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView v = text("—", 14, cText, false);
+        l.addView(v);
+        parent.addView(l);
+        return v;
+    }
+
+    /** Measure in rounds of 15 UDP packets every ~10 s while this screen is visible. */
+    private void startQualityLoop() {
+        if (measuring) return;
+        measuring = true;
+        new Thread(new Runnable() { public void run() {
+            String lastNet = null;
+            while (measuring) {
+                android.net.Network net = Checker.testNetwork(MainActivity.this);
+                String key = net == null ? "" : net.toString();
+                if (!key.equals(lastNet)) { QUALITY.reset(); lastNet = key; }   // new network: start over
+                final Quality.Result res = net == null ? null : QUALITY.measure(net);
+                handler.post(new Runnable() { public void run() { lastQuality = res; showQuality(); } });
+                for (int i = 0; i < 100 && measuring; i++) {
+                    try { Thread.sleep(100); } catch (InterruptedException e) { break; }
+                }
+            }
+        } }, "wifidot-quality").start();
+    }
+
+    private void showQuality() {
+        if (qualityValue == null) return;
+        Quality.Result q = lastQuality;
+        String st = prefs.getString("state", "");
+        int level;
+        if (q == null || q.sent == 0) {
+            boolean none = "nowifi".equals(st);
+            qualityValue.setText(none ? "No connection" : "Measuring…");
+            qualityValue.setTextColor(cSub);
+            level = 0;
+            qLatency.setText("—"); qJitter.setText("—"); qLoss.setText("—"); qNote.setText("");
+        } else if (q.received == 0) {
+            level = 1;
+            qualityValue.setText("Bad · 0/100 · no replies");
+            qualityValue.setTextColor(Quality.COLORS[1]);
+            qLatency.setText("—"); qJitter.setText("—"); qLoss.setText("100%");
+            qNote.setText(q.sent + " packets to " + q.target + ", none came back");
+        } else {
+            level = q.level;
+            qualityValue.setText(Quality.LABELS[level] + " · " + q.score + "/100");
+            qualityValue.setTextColor(Quality.COLORS[level]);
+            qLatency.setText(String.format(Locale.US, "%.0f ms", q.latencyMs));
+            qJitter.setText(String.format(Locale.US, "%.0f ms", q.jitterMs));
+            qLoss.setText(q.lossPct == 0 ? "0%" : String.format(Locale.US, "%.1f%%", q.lossPct));
+            qNote.setText("Last " + q.sent + " packets to " + q.target
+                    + " · updates every 10 s while this screen is open");
+        }
+        for (int i = 0; i < 5; i++) {
+            qualityScale.getChildAt(i).setBackground(round(i < level ? Quality.COLORS[level] : cLine, 3));
+        }
     }
 
     // ---------------------------------------------------------------- speed test

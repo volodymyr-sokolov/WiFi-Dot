@@ -170,9 +170,7 @@ public final class Checker {
                 // same router — do not re-probe it every 10 seconds
                 label = p.getString("label", gw); url = p.getString("url", "");
             } else {
-                String name = ssid(ctx);
-                boolean byName = name != null && name.toLowerCase(Locale.ROOT).contains("starlink");
-                if (markedStarlink(ctx, g) || byName || isStarlink(wifi, g)) {
+                if (Starlink.detect(wifi, g)) {
                     label = "Starlink"; url = STARLINK_URL;
                 } else if (g != null) {
                     url = "http://" + g + "/";
@@ -360,47 +358,8 @@ public final class Checker {
 
     // ---------- Router detection ----------
 
-    /** Manual "this network is Starlink" flag (by gateway address). */
-    static boolean markedStarlink(Context ctx, String gw) {
-        return gw != null && ctx.getSharedPreferences(PREFS, 0)
-                .getStringSet("starlink_gws", new java.util.HashSet<String>()).contains(gw);
-    }
 
-    /** Network name (only available with location permission and Location turned on). */
-    @SuppressWarnings("deprecation")
-    static String ssid(Context ctx) {
-        try {
-            WifiManager wm = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            String s = wm.getConnectionInfo().getSSID();
-            if (s == null || s.contains("unknown ssid")) return null;
-            return s.replace("\"", "");
-        } catch (Throwable e) { return null; }
-    }
 
-    private static boolean isStarlink(final Network wifi, String gw) {
-        // The Starlink dish is always reachable at 192.168.100.1 (also through the Starlink router)
-        // and answers on its gRPC ports 9200/9201. Port 80 alone is not enough: 192.168.100.1 is
-        // also the usual address of cable modems; router ports 9000/9001 are common on NAS boxes.
-        final String[] hosts = {"192.168.100.1", "192.168.100.1"};
-        final int[] ports = {9200, 9201};
-        final boolean[] ok = {false};
-        Thread[] ts = new Thread[ports.length];
-        for (int i = 0; i < ports.length; i++) {
-            final int port = ports[i];
-            final String host = hosts[i];
-            ts[i] = new Thread(new Runnable() { public void run() {
-                if (host != null && tcpOpen(wifi, host, port, 3000)) synchronized (ok) { ok[0] = true; }
-            }});
-            ts[i].start();
-        }
-        for (Thread t : ts) { try { t.join(3500); } catch (InterruptedException ignored) {} }
-        synchronized (ok) { if (ok[0]) return true; }
-        if (gw != null) {
-            String g = fetchHead(wifi, "http://" + gw + "/", 2500);
-            if (g != null && g.contains("starlink")) return true;
-        }
-        return false;
-    }
 
     private static boolean tcpOpen(Network net, String host, int port, int timeout) {
         Socket s = null;
