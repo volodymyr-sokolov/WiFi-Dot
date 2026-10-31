@@ -57,7 +57,7 @@ final class LockScreen {
     /** Show the card if enabled and the phone is locked; otherwise remove it. */
     private static final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
     private static final long UNLOCK_QUIET_MS = 5000;   // never post right after an unlock
-    private static final long EXPIRE_MS = 3 * 60_000L;   // a card nobody refreshed removes itself
+    private static final long EXPIRE_MS = 5 * 60_000L;   // a card nobody refreshed removes itself
                                                           // (screen-off checks re-post it every ~2 min)
     private static volatile long lastUnlock = 0;
 
@@ -104,6 +104,7 @@ final class LockScreen {
             MAIN.postDelayed(new Runnable() { public void run() { decide(ctx); } }, wait);
         }
         if (!isShowing(ctx)) { cancel(ctx); return; }
+        Alerts.cancel(ctx);   // never a pop-up and the card at the same time
         try {
             ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).notify(ID, build(ctx));
         } catch (Throwable ignored) {}

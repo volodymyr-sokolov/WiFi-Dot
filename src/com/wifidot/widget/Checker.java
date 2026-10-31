@@ -39,7 +39,8 @@ public final class Checker {
     private static boolean again = false;
     /** Callers waiting for the current check (their receiver/job stays alive until it's done). */
     private static final java.util.List<Waiter> waiting = new java.util.ArrayList<Waiter>();
-    private static boolean callbackRegistered = false;
+    private static final java.util.concurrent.atomic.AtomicBoolean callbackRegistered =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
     /** When this process registered the callback (its immediate "available" echo is ignored). */
     static volatile long callbackRegisteredAt = -1;
 
@@ -117,7 +118,7 @@ public final class Checker {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, 0);
 
         String state, label, url, gw = "", netKey = "";
-        boolean wifiValidated = false;
+        boolean wifiValidated = false, wifiUnknown = false;
         boolean hotspot = Hotspot.isOn(ctx);
         String hsNet = "";
         if (hotspot) {
@@ -134,20 +135,27 @@ public final class Checker {
             boolean online = hasInternet(wifi);
             NetworkCapabilities wc = cm.getNetworkCapabilities(wifi);
             wifiValidated = wc != null && wc.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            boolean unknown = false;
             if (online) {
                 p.edit().remove("fail_since").apply();
             } else if (blockedForUs(cm, wifi)) {
-                online = keepPrevious(p, true);       // the phone blocks our background access: not an outage
+                // The phone blocks our background access: not an outage. Keep a recent result,
+                // otherwise say "checking" rather than guess.
+                p.edit().remove("fail_since").apply();
+                Boolean prev = recentPrevious(p);
+                if (prev == null) unknown = true; else online = prev;
             } else if (wifiValidated) {
                 // Probes fail but Android still says the Wi-Fi works: could be our access being
                 // throttled. Call it an outage only if it lasts a full minute.
                 long since = p.getLong("fail_since", -1);
                 if (since < 0) { since = Clock.now(); p.edit().putLong("fail_since", since).apply(); }
                 if (Clock.now() - since < FAIL_VALIDATED_MS) {
-                    online = keepPrevious(p, true);
+                    Boolean prev = recentPrevious(p);
+                    online = prev == null || prev;   // Android validated it: assume OK until proven
                     Poller.scheduleIn(ctx, 20_000);
                 }
             }
+            if (unknown) wifiUnknown = true;
             String g = gateway(ctx, cm, wifi);
             gw = g == null ? "" : g;
             netKey = wifi.toString() + "@" + gw;   // same router on a different network → re-detect
@@ -172,7 +180,11 @@ public final class Checker {
                 }
                 p.edit().putLong("detected2", now).apply();
             }
-            state = online ? "online" : "offline";
+            state = wifiUnknown ? "" : online ? "online" : "offline";   // "" = grey "Checking…"
+        }
+        if (!"online".equals(state) && !"offline".equals(state) && !"".equals(state)
+                || !netKey.equals(p.getString("net_key", ""))) {
+            p.edit().remove("fail_since").apply();   // a failure on an old network doesn't count here
         }
 
         String prevState = p.getString("state", "");
@@ -188,7 +200,7 @@ public final class Checker {
                 .putString("gw", gw).putString("net_key", netKey).putString("hs_net", hsNet)
                 .putBoolean("wifi_validated", wifiValidated)
                 .putLong("latency", "online".equals(state) || "online".equals(hsNet) ? lastLatencyMs : -1)
-                .putLong("time", System.currentTimeMillis()).apply();
+                .putLong("time", System.currentTimeMillis()).putLong("state_at", Clock.now()).apply();
         if (changed || !p.getBoolean("rendered", false)) {
             p.edit().putBoolean("rendered", true).apply();
             render(ctx);
@@ -269,14 +281,16 @@ public final class Checker {
     // ---------- Internet ----------
 
     private static final long FAIL_VALIDATED_MS = 60_000L;
-    private static final long PROBE_DEADLINE_MS = 8_000L;
+    private static final long PROBE_DEADLINE_MS = 4_000L;   // per URL, DNS included
 
-    /** Previous Wi-Fi state, or the fallback if there was none. */
-    private static boolean keepPrevious(SharedPreferences p, boolean fallback) {
+    /** The previous Wi-Fi result if it is less than 2 minutes old, else null. */
+    private static Boolean recentPrevious(SharedPreferences p) {
+        long at = p.getLong("state_at", -1);
+        if (at < 0 || Clock.now() - at > 120_000L) return null;
         String prev = p.getString("state", "");
-        if ("online".equals(prev)) return true;
-        if ("offline".equals(prev)) return false;
-        return fallback;
+        if ("online".equals(prev)) return Boolean.TRUE;
+        if ("offline".equals(prev)) return Boolean.FALSE;
+        return null;
     }
 
     /** Is the system blocking this app's traffic on that network (data saver / background restriction)? */
@@ -292,42 +306,50 @@ public final class Checker {
 
     static volatile long lastLatencyMs = -1;
 
-    /** Probes with an overall deadline (DNS lookups aren't covered by the socket timeouts). */
-    private static boolean hasInternet(final Network net) {
-        final boolean[] ok = {false};
-        Thread t = new Thread(new Runnable() { public void run() { ok[0] = probe(net); } }, "wifidot-probe");
-        t.setDaemon(true);
-        t.start();
-        try { t.join(PROBE_DEADLINE_MS); } catch (InterruptedException ignored) {}
-        return ok[0];
-    }
+    private static final String[] PROBE_URLS = {
+            "http://connectivitycheck.gstatic.com/generate_204",
+            "http://cp.cloudflare.com/generate_204",
+    };
 
-    private static boolean probe(Network wifi) {
+    /**
+     * Internet check: each URL gets its own 4 s budget including DNS (socket timeouts don't cover
+     * DNS). A late probe thread can't touch this check's result: latency travels with it.
+     */
+    private static boolean hasInternet(final Network net) {
         lastLatencyMs = -1;
-        String[] urls = {
-                "http://connectivitycheck.gstatic.com/generate_204",
-                "http://cp.cloudflare.com/generate_204",
-        };
-        for (String u : urls) {
-            HttpURLConnection c = null;
-            try {
-                c = (HttpURLConnection) wifi.openConnection(new URL(u));
-                c.setConnectTimeout(3000);
-                c.setReadTimeout(3000);
-                c.setInstanceFollowRedirects(false);
-                c.setUseCaches(false);
-                long t0 = System.nanoTime();
-                // 204 = internet OK; 200/302 usually means a captive portal
-                if (c.getResponseCode() == 204) {
-                    lastLatencyMs = (System.nanoTime() - t0) / 1_000_000L;
-                    return true;
-                }
-            } catch (Throwable ignored) {
-            } finally {
-                if (c != null) c.disconnect();
+        for (final String u : PROBE_URLS) {
+            final long[] result = {-1};   // latency in ms, or -1
+            Thread t = new Thread(new Runnable() { public void run() {
+                long r = probe(net, u);
+                synchronized (result) { result[0] = r; }
+            } }, "wifidot-probe");
+            t.setDaemon(true);
+            t.start();
+            try { t.join(PROBE_DEADLINE_MS); } catch (InterruptedException ignored) {}
+            synchronized (result) {
+                if (result[0] >= 0) { lastLatencyMs = result[0]; return true; }
             }
         }
         return false;
+    }
+
+    /** One probe: latency in ms if the URL answered 204, else -1. */
+    private static long probe(Network wifi, String u) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) wifi.openConnection(new URL(u));
+            c.setConnectTimeout(2500);
+            c.setReadTimeout(2500);
+            c.setInstanceFollowRedirects(false);
+            c.setUseCaches(false);
+            long t0 = System.nanoTime();
+            // 204 = internet OK; 200/302 usually means a captive portal
+            if (c.getResponseCode() == 204) return (System.nanoTime() - t0) / 1_000_000L;
+        } catch (Throwable ignored) {
+        } finally {
+            if (c != null) c.disconnect();
+        }
+        return -1;
     }
 
     // ---------- Router detection ----------
@@ -492,9 +514,8 @@ public final class Checker {
      * Android immediately re-deliver "network available" → another check → an endless loop.
      * NetReceiver also ignores the one delivery that follows each registration.
      */
-    static synchronized void registerCallbackOnce(Context ctx) {
-        if (callbackRegistered) return;
-        callbackRegistered = true;
+    static void registerCallbackOnce(Context ctx) {
+        if (!callbackRegistered.compareAndSet(false, true)) return;   // lock-free: never blocks the UI
         callbackRegisteredAt = android.os.SystemClock.elapsedRealtime();
         registerNetworkCallback(ctx);
     }
