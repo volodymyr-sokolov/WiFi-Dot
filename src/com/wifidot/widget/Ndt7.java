@@ -44,8 +44,26 @@ final class Ndt7 {
 
     private volatile boolean cancel;
     private long bytesUsed;
+    /** The open WebSocket: closing it unblocks a stuck read or write (Stop, watchdog). */
+    private volatile Ws current;
 
-    void cancel() { cancel = true; }
+    void cancel() {
+        cancel = true;
+        Ws w = current;
+        if (w != null) w.close();
+    }
+
+    /** Closes the socket if a phase overruns its time (a stalled link can block a write for minutes). */
+    private Thread watchdog(final long ms) {
+        Thread t = new Thread(new Runnable() { public void run() {
+            try { Thread.sleep(ms); } catch (InterruptedException e) { return; }
+            Ws w = current;
+            if (w != null) w.close();
+        } }, "wifidot-ndt7-watchdog");
+        t.setDaemon(true);
+        t.start();
+        return t;
+    }
 
     void run(final Network net, final Listener l) {
         new Thread(new Runnable() { public void run() { test(net, l); } }, "wifidot-ndt7").start();
@@ -67,7 +85,8 @@ final class Ndt7 {
             if (!cancel) up = upload(net, urls.getString("wss:///ndt/v7/upload"), l);
             if (cancel) error = "Stopped";
         } catch (Throwable e) {
-            error = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            error = cancel ? "Stopped"
+                    : e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
         }
         l.finished(down, up, bytesUsed, error);
     }
@@ -93,6 +112,9 @@ final class Ndt7 {
 
     private double download(Network net, String url, Listener l) throws Exception {
         Ws ws = Ws.open(net, url);
+        current = ws;
+        if (cancel) ws.close();
+        Thread dog = watchdog(HARD_CAP_MS + 3000);
         try {
             long start = System.nanoTime(), lastUi = 0, total = 0;
             ServerCount srv = new ServerCount();
@@ -111,11 +133,15 @@ final class Ndt7 {
                     l.download(total * 8.0 / (ms * 1000.0), false);
                 }
             }
+            if (cancel) throw new IOException("Stopped");
+            // Download: the client's own count (what actually arrived), as the ndt7 spec recommends.
             double secs = (System.nanoTime() - start) / 1e9;
-            double mbps = srv.mbps() > 0 ? srv.mbps() : total * 8.0 / (secs * 1e6);
+            double mbps = total * 8.0 / (secs * 1e6);
             l.download(mbps, true);
             return mbps;
         } finally {
+            dog.interrupt();
+            current = null;
             ws.close();
         }
     }
@@ -124,6 +150,19 @@ final class Ndt7 {
 
     private double upload(Network net, String url, final Listener l) throws Exception {
         final Ws ws = Ws.open(net, url);
+        current = ws;
+        if (cancel) ws.close();
+        Thread dog = watchdog(PHASE_MS + 8000);
+        try {
+            return uploadOn(ws, l);
+        } finally {
+            dog.interrupt();
+            current = null;
+            ws.close();
+        }
+    }
+
+    private double uploadOn(final Ws ws, final Listener l) throws Exception {
         final ServerCount srv = new ServerCount();
         // The server reports what it received; read those messages in parallel.
         Thread reader = new Thread(new Runnable() { public void run() {
@@ -163,7 +202,7 @@ final class Ndt7 {
             if (srv.mbps() <= 0) throw e;
         }
         try { reader.join(5000); } catch (InterruptedException ignored) {}
-        ws.close();
+        if (cancel) throw new IOException("Stopped");
         double secs = Math.min(PHASE_MS, (System.nanoTime() - start) / 1_000_000L) / 1000.0;
         double mbps = srv.mbps() > 0 ? srv.mbps() : sent * 8.0 / (secs * 1e6);
         l.upload(mbps, true);
@@ -211,7 +250,6 @@ final class Ndt7 {
         private final byte[] mask = new byte[4];
         private final SecureRandom rnd = new SecureRandom();
         private byte[] maskedBuf = new byte[0];
-        private int maskedLen = -1;
 
         private Ws(Socket s) throws IOException {
             sock = s;
@@ -224,7 +262,7 @@ final class Ndt7 {
             String host = u.getHost();
             int port = u.getPort() > 0 ? u.getPort() : 443;
             Socket raw = net.getSocketFactory().createSocket();
-            raw.connect(new InetSocketAddress(host, port), 8000);
+            raw.connect(new InetSocketAddress(net.getByName(host), port), 8000);   // DNS on this network
             SSLSocket s = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
                     .createSocket(raw, host, port, true);
             s.setSoTimeout(8000);
@@ -310,23 +348,25 @@ final class Ndt7 {
             return b;
         }
 
-        /** Send one masked frame. The same random payload is re-masked only when its size changes. */
+        /** Send one masked frame (a fresh random mask every frame, as RFC 6455 requires). */
         synchronized void send(int opcode, byte[] payload, int len) throws IOException {
             out.write(0x80 | opcode);
             if (len < 126) out.write(0x80 | len);
             else if (len < 65536) { out.write(0x80 | 126); out.write(len >> 8); out.write(len); }
             else { out.write(0x80 | 127); for (int i = 7; i >= 0; i--) out.write((int) ((long) len >> (8 * i))); }
-            if (opcode == 0x2 && len == maskedLen) {
-                out.write(mask);
-                out.write(maskedBuf, 0, len);
-            } else {
-                rnd.nextBytes(mask);
-                byte[] buf = opcode == 0x2 ? (maskedBuf.length >= len ? maskedBuf : (maskedBuf = new byte[len])) : new byte[len];
-                for (int i = 0; i < len; i++) buf[i] = (byte) (payload[i] ^ mask[i & 3]);
-                if (opcode == 0x2) maskedLen = len;
-                out.write(mask);
-                out.write(buf, 0, len);
+            rnd.nextBytes(mask);
+            if (maskedBuf.length < len) maskedBuf = new byte[len];
+            byte m0 = mask[0], m1 = mask[1], m2 = mask[2], m3 = mask[3];
+            int i = 0;
+            for (; i + 3 < len; i += 4) {
+                maskedBuf[i] = (byte) (payload[i] ^ m0);
+                maskedBuf[i + 1] = (byte) (payload[i + 1] ^ m1);
+                maskedBuf[i + 2] = (byte) (payload[i + 2] ^ m2);
+                maskedBuf[i + 3] = (byte) (payload[i + 3] ^ m3);
             }
+            for (; i < len; i++) maskedBuf[i] = (byte) (payload[i] ^ mask[i & 3]);
+            out.write(mask);
+            out.write(maskedBuf, 0, len);
             out.flush();
         }
 

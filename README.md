@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v3.6)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v3.7)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -40,7 +40,19 @@ The main screen shows:
   - Latency (median): ≤30 ms → 5, ≤60 → 4, ≤100 → 3, ≤200 → 2, slower → 1.
   - Jitter of 30 ms or more costs 1 point, 80 ms or more costs 2. A 20 ms ping with jitter jumping to 100 ms means lag, so it rates "Fair" rather than "Excellent".
   - Packet loss above 1% caps the rating at 2 ("Bad"), and 10% or more makes it 1 ("Very bad"), however low the ping. A single lost packet is treated as noise, so it takes at least 2.
-- an on-demand download test: 4 parallel streams for 8 s, about 30–100 MB
+- **Speed test** by [M-Lab ndt7](https://www.measurementlab.net/tests/ndt/ndt7/): two speedometers (Download and Upload, non-linear scale 0–1000 Mbit/s) under Connection quality.
+  - Tap **Start**. Before every test the app shows how much data it will use: about 10 s download plus 10 s upload at full speed. That's roughly 100–300 MB on a typical Starlink connection and up to about 1.3 GB on a 1 Gbit/s line. After a test it uses your last speeds to estimate. Afterwards it shows the data actually used.
+  - It finds the nearest M-Lab server with the Locate API v2 and connects over a WebSocket (`net.measurementlab.ndt.v7`), bound to the Wi-Fi (or, with the hotspot on, the shared connection).
+  - Download speed comes from what actually arrived; upload speed comes from the server's own count. **Stop** ends a test at once, even on a stalled connection.
+
+## Data saver
+
+Off by default. Turn it on in **Settings** to cut the app's own data use, at the cost of some features:
+
+- no speed test
+- connection quality only when you tap **Measure** (one round, about 2 KB)
+- background checks every 60 s with the screen on (instead of 20 s) and every 10 min with it off (instead of 2 min)
+- no router brand lookup (the router's page isn't downloaded; the gateway address is shown instead). Starlink detection still works.
 
 ## How it works
 

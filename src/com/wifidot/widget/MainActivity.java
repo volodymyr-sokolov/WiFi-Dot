@@ -67,6 +67,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private TextView lockSub;
     private boolean binding;
     private Ndt7 test;
+    private android.app.AlertDialog testDialog;
 
     private final Runnable ticker = new Runnable() {
         public void run() { updateTime(); updateLink(); handler.postDelayed(this, 1000); }
@@ -116,6 +117,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     @Override
     protected void onDestroy() {
+        if (testDialog != null) testDialog.dismiss();
         if (test != null) test.cancel();
         super.onDestroy();
     }
@@ -482,12 +484,21 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     /** Data saver: one round of 15 tiny packets (about 2 KB) on request. */
     private void measureOnce() {
+        if (!qMeasure.isEnabled()) return;
         final Context app = getApplicationContext();
         qualityValue.setText("Measuring…");
+        qMeasure.setEnabled(false);
+        qMeasure.setAlpha(0.4f);
         new Thread(new Runnable() { public void run() {
             android.net.Network net = Checker.qualityNetwork(app);
+            QUALITY.reset();   // a fresh measurement, not mixed with rounds from earlier taps
             final Quality.Result res = net == null ? null : QUALITY.measure(net);
-            handler.post(new Runnable() { public void run() { lastQuality = res; showQuality(); } });
+            handler.post(new Runnable() { public void run() {
+                qMeasure.setEnabled(true);
+                qMeasure.setAlpha(1f);
+                lastQuality = res;
+                showQuality();
+            } });
         } }, "wifidot-quality-once").start();
     }
 
@@ -583,7 +594,8 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         boolean ok = net != null && ("online".equals(st)
                 || "hotspot".equals(st) && "online".equals(prefs.getString("hs_net", "")));
         if (!ok) { testInfo.setText("Needs a working internet connection over Wi-Fi or the hotspot"); return; }
-        new android.app.AlertDialog.Builder(this)
+        if (testDialog != null && testDialog.isShowing()) return;   // one dialog, one test
+        testDialog = new android.app.AlertDialog.Builder(this)
                 .setTitle("Run speed test?")
                 .setMessage(dataWarning() + "\n\nOn a metered connection (satellite plan, mobile data via "
                         + "the hotspot) this counts towards your data allowance.")
@@ -595,6 +607,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     }
 
     private void startSpeedTest(android.net.Network net) {
+        if (test != null || Prefs.dataSaver(this) || isFinishing()) return;
         test = new Ndt7();
         testLabel.setText("Stop");
         testServer.setText("Finding the nearest M-Lab server…");

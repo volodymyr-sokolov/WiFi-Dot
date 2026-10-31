@@ -58,14 +58,15 @@ final class Gauge extends View {
     }
 
     @Override protected void onMeasure(int w, int h) {
-        int width = MeasureSpec.getSize(w);
+        int width = MeasureSpec.getMode(w) == MeasureSpec.UNSPECIFIED ? (int) (160 * dp) : MeasureSpec.getSize(w);
+        width = Math.max(width, (int) (90 * dp));
         float pad = 4 * dp + 14 * dp, r = width / 2f - pad;
         setMeasuredDimension(width, (int) (pad + r * 1.48f + 38 * dp));   // arc + value + unit + label
     }
 
     @Override protected void onDraw(Canvas c) {
         float w = getWidth(), stroke = 8 * dp, pad = stroke / 2 + 14 * dp;
-        float r = w / 2 - pad, cx = w / 2, cy = pad + r;
+        float r = Math.max(24 * dp, w / 2 - pad), cx = w / 2, cy = pad + r;
         oval.set(cx - r, cy - r, cx + r, cy + r);
         c.drawArc(oval, START, SWEEP, false, track);
         float pos = position(mbps);
