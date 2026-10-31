@@ -119,6 +119,7 @@ public final class Checker {
 
         String state, label, url, gw = "", netKey = "";
         boolean wifiValidated = false, wifiUnknown = false;
+        boolean measured = true;   // false when the Wi-Fi result was kept/assumed, not actually probed
         boolean hotspot = Hotspot.isOn(ctx);
         String hsNet = "";
         if (hotspot) {
@@ -144,6 +145,7 @@ public final class Checker {
                 p.edit().remove("fail_since").apply();
                 Boolean prev = recentPrevious(p);
                 if (prev == null) unknown = true; else online = prev;
+                measured = false;
             } else if (wifiValidated) {
                 // Probes fail but Android still says the Wi-Fi works: could be our access being
                 // throttled. Call it an outage only if it lasts a full minute.
@@ -152,6 +154,7 @@ public final class Checker {
                 if (Clock.now() - since < FAIL_VALIDATED_MS) {
                     Boolean prev = recentPrevious(p);
                     online = prev == null || prev;   // Android validated it: assume OK until proven
+                    measured = false;
                     Poller.scheduleIn(ctx, 20_000);
                 }
             }
@@ -200,7 +203,9 @@ public final class Checker {
                 .putString("gw", gw).putString("net_key", netKey).putString("hs_net", hsNet)
                 .putBoolean("wifi_validated", wifiValidated)
                 .putLong("latency", "online".equals(state) || "online".equals(hsNet) ? lastLatencyMs : -1)
-                .putLong("time", System.currentTimeMillis()).putLong("state_at", Clock.now()).apply();
+                .putLong("time", System.currentTimeMillis()).apply();
+        // Only a real measurement renews "recent": a kept/assumed result must age out after 2 min.
+        if (measured) p.edit().putLong("state_at", Clock.now()).apply();
         if (changed || !p.getBoolean("rendered", false)) {
             p.edit().putBoolean("rendered", true).apply();
             render(ctx);
@@ -286,7 +291,8 @@ public final class Checker {
     /** The previous Wi-Fi result if it is less than 2 minutes old, else null. */
     private static Boolean recentPrevious(SharedPreferences p) {
         long at = p.getLong("state_at", -1);
-        if (at < 0 || Clock.now() - at > 120_000L) return null;
+        long now = Clock.now();
+        if (at < 0 || at > now || now - at > 120_000L) return null;   // none, other boot, or too old
         String prev = p.getString("state", "");
         if ("online".equals(prev)) return Boolean.TRUE;
         if ("offline".equals(prev)) return Boolean.FALSE;

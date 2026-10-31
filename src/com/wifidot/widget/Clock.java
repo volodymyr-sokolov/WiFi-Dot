@@ -30,6 +30,6 @@ final class Clock {
         if (id.equals(p.getString("boot_id", ""))) return;
         p.edit().putString("boot_id", id)
                 .remove("pending_state").remove("pending_since").remove("last_alert_at")
-                .putLong("wifi_since", now()).remove("fail_since").apply();
+                .putLong("wifi_since", now()).remove("fail_since").remove("state_at").apply();
     }
 }

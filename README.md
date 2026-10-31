@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v3.4)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v3.5)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -18,7 +18,11 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 Each can be turned on or off in the app (all on by default):
 
-- **Pop-up alerts**: a short message when the internet over Wi-Fi goes down or comes back, e.g. "No internet · Starlink". It shows the green or red status icon, disappears by itself and leaves no icon next to the clock. It only appears once two checks agree, never twice for the same status, and never while the phone's hotspot is on.
+- **Pop-up alerts**: a short message when the internet over Wi-Fi goes down or comes back, e.g. "No internet · Starlink". It shows the green or red status icon, disappears by itself and leaves no icon next to the clock.
+  - A change must hold for at least 5 s across two checks, or 15 s if Android still reports the Wi-Fi as working.
+  - There is no "No internet" in the first 20 s after Wi-Fi connects.
+  - Pop-ups are at least 30 s apart, and each status gets a fresh notification, so mixed icons can't appear.
+  - Never twice for the same status, never while the phone's hotspot is on, and never together with the lock-screen card.
 - **Lock screen** (off by default): a status card like the widget, with the coloured icon and e.g. "Internet OK · Starlink". It's a regular notification that never makes a sound, never pops up and never wakes the screen. It exists only while the phone is locked and is removed as soon as you unlock. If it doesn't appear, use the **Settings** button next to the switch to allow WiFi Dot notifications on the lock screen. Most phones don't let ordinary apps put widgets on the lock screen. On phones that do, the widget itself can also be placed there.
 - **Home screen widget**: the icon in its colour, with the router name. Tap it for a small menu with **Details** (opens the app) and **Router main page**, or **Hotspot settings** while the hotspot is on.
 - **Quick Settings tile**: "Wi-Fi Internet". Tap it to open the router page.
@@ -38,14 +42,16 @@ The main screen shows:
 ## How it works
 
 - Internet is checked with real HTTP probes (`generate_204`) bound to the Wi-Fi network.
-- Checks run when Wi-Fi or the hotspot changes, when the screen turns on, and on light background alarms: every 20 s with the screen on, every 5 min with it off.
+- Checks run when Wi-Fi or the hotspot changes, when the screen turns on, and on light background alarms: every 20 s with the screen on, every 2 min with it off. A screen-off alarm doesn't wake the phone; it fires when the phone next wakes.
 - While the hotspot is on, the app checks the connection being shared (usually mobile data).
 - Starlink is detected by any of:
   - the dish (`192.168.100.1`, ports 9200/9201/80)
   - the Starlink router gRPC port (`:9000`)
   - the network name (needs location permission)
   - a manual "This network is Starlink" switch
+- If the phone blocks the app's background network access, the app doesn't report an outage. It keeps the last result for up to 2 minutes, then shows grey "Checking…". The same goes for failures while Android still says the Wi-Fi works: the app reports an outage only if they last a full minute.
 - For reliable background checks, turn off battery optimization for WiFi Dot. The app has a shortcut for this.
+- Known limitation: while the app isn't running, Android only wakes it when a Wi-Fi network connects, not when one drops. A drop is noticed at the next check, which can be up to 20 s with the screen on, or when you next wake the phone.
 
 Requires Android 6.0+. The Quick Settings tile requires Android 7.0+.
 
