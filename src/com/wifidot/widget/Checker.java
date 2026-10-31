@@ -174,7 +174,8 @@ public final class Checker {
                     label = "Starlink"; url = STARLINK_URL;
                 } else if (g != null) {
                     url = "http://" + g + "/";
-                    String vendor = detectVendor(wifi, url);
+                    // Data saver: don't download the router's page just to recognise its brand.
+                    String vendor = Prefs.dataSaver(ctx) ? null : detectVendor(wifi, url);
                     label = vendor != null ? vendor : g;
                 } else {
                     label = "Wi-Fi"; url = "";

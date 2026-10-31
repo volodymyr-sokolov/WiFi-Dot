@@ -16,6 +16,7 @@ import android.os.SystemClock;
 final class Poller {
     static final String ACTION_POLL = "com.wifidot.widget.POLL";
     private static final long SCREEN_ON = 20_000L, SCREEN_OFF = 2 * 60_000L;
+    private static final long SCREEN_ON_SAVER = 60_000L, SCREEN_OFF_SAVER = 10 * 60_000L;   // Data saver
     private static volatile long soonAt = 0;   // elapsedRealtime of a requested quick re-check
 
     private Poller() {}
@@ -24,7 +25,8 @@ final class Poller {
         if (!Prefs.anyOutputOn(ctx)) { cancel(ctx); return; }
         PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
         long now = SystemClock.elapsedRealtime();
-        long at = now + (pm.isInteractive() ? SCREEN_ON : SCREEN_OFF);
+        boolean saver = Prefs.dataSaver(ctx);
+        long at = now + (pm.isInteractive() ? (saver ? SCREEN_ON_SAVER : SCREEN_ON) : (saver ? SCREEN_OFF_SAVER : SCREEN_OFF));
         if (soonAt > now && soonAt < at) at = soonAt;   // keep a pending quick re-check
         set(ctx, at);
     }

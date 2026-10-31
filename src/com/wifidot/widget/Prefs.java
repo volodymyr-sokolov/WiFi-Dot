@@ -18,6 +18,10 @@ final class Prefs {
     static void setWidget(Context c, boolean on) { setComponent(c, WifiDotWidget.class, on); }
     static void setTile(Context c, boolean on) { if (Build.VERSION.SDK_INT >= 24) setComponent(c, TILE_CLASS, on); }
 
+    /** Data saver: no speed test, quality only on request, slower checks, no router brand lookup. */
+    static boolean dataSaver(Context c) { return c.getSharedPreferences(Checker.PREFS, 0).getBoolean("data_saver", false); }
+    static void setDataSaver(Context c, boolean on) { c.getSharedPreferences(Checker.PREFS, 0).edit().putBoolean("data_saver", on).apply(); }
+
     static boolean anyOutputOn(Context c) { return widget(c) || tile(c) || Alerts.enabled(c) || LockScreen.enabled(c); }
 
     private static boolean componentOn(Context c, Class<?> cls) { return componentOn(c, cls.getName()); }

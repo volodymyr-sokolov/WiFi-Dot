@@ -50,7 +50,10 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     private ImageView statusIcon;
     private TextView statusTitle, statusSub, statusTime;
-    private TextView linkValue, downloadValue, testLabel;
+    private TextView linkValue, testLabel, testServer, testInfo, saverSub;
+    private Gauge gDown, gUp;
+    private View testPill, qMeasure;
+    private Switch swSaver;
     private TextView qualityValue, qLatency, qJitter, qLoss, qNote;
     private LinearLayout qualityScale, qualityDetails;
     private ImageView qualityArrow;
@@ -63,7 +66,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private View addWidget, addTile, lockSettings;
     private TextView lockSub;
     private boolean binding;
-    private SpeedTest test;
+    private Ndt7 test;
 
     private final Runnable ticker = new Runnable() {
         public void run() { updateTime(); updateLink(); handler.postDelayed(this, 1000); }
@@ -174,16 +177,11 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         LinearLayout speed = card(false);
         linkValue = text("—", 13, cSub, false);
 
-        downloadValue = text("Not tested yet", 13, cSub, false);
         speed.addView(row(R.drawable.ic_ui_link, "Wi-Fi link", linkValue, null, null));
         speed.addView(divider());
         speed.addView(qualityRow());
         speed.addView(divider());
-        View testPill = smallPill("Test", new View.OnClickListener() {
-            public void onClick(View v) { toggleSpeedTest(); }
-        });
-        testLabel = (TextView) ((ViewGroup) testPill).getChildAt(0);
-        speed.addView(row(R.drawable.ic_ui_download, "Download", downloadValue, testPill, null));
+        speed.addView(speedPanel());
         col.addView(speed);
 
         // ---- Where the status is shown
@@ -260,6 +258,24 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         // ---- Settings
         col.addView(section("Settings"));
         LinearLayout settings = card(false);
+        swSaver = new Switch(this);
+        saverSub = text("No speed test · quality only on request · checks every 60 s · "
+                + "no router brand lookup", 13, cSub, false);
+        settings.addView(row(R.drawable.ic_ui_download, "Data saver", saverSub, swSaver, null));
+        swSaver.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton v, boolean on) {
+                if (binding) return;
+                Prefs.setDataSaver(MainActivity.this, on);
+                if (on && test != null) test.cancel();
+                measuring = false; loopGen++;
+                lastQuality = null;
+                if (!on) startQualityLoop();
+                Checker.runAsync(MainActivity.this, null);   // reschedules the poll at the new interval
+                refresh();
+            }
+        });
+        settings.addView(divider());
+
         batterySub = text("", 13, cSub, false);
         settings.addView(row(R.drawable.ic_ui_battery, "Battery optimization", batterySub, chevron(),
                 new View.OnClickListener() {
@@ -310,16 +326,12 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         updateTime();
 
         showQuality();
-        if (test == null) {
-            float dl = prefs.getFloat("dl_mbps", -1);
-            long t = prefs.getLong("dl_time", 0);
-            downloadValue.setText(dl < 0 ? "Not tested yet · uses ~30–100 MB"
-                    : fmtMbps(dl) + " · " + ago(t));
-        }
+        showSpeedResult();
         updateLink();
 
         binding = true;
         swAlerts.setChecked(Alerts.enabled(this));
+        swSaver.setChecked(Prefs.dataSaver(this));
         swLock.setChecked(LockScreen.enabled(this));
         boolean lockOn = LockScreen.enabled(this);
         boolean lockOk = LockScreen.allowed(this);
@@ -402,6 +414,12 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         line.addView(qualityScale);
         t.addView(line);
         r.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
+        qMeasure = smallPill("Measure", new View.OnClickListener() {
+            public void onClick(View v) { measureOnce(); }
+        });
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-2, -2);
+        mp.rightMargin = px(6);
+        r.addView(qMeasure, mp);
         qualityArrow = icon(R.drawable.ic_ui_chevron, cSub, 22);
         qualityArrow.setRotation(90);   // pointing down = collapsed
         r.addView(qualityArrow);
@@ -442,7 +460,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     /** Measure in rounds of 15 UDP packets every ~10 s while this screen is visible. */
     private void startQualityLoop() {
-        if (measuring) return;
+        if (measuring || Prefs.dataSaver(this)) return;   // Data saver: only on request (Measure)
         measuring = true;
         final int gen = ++loopGen;
         final Context app = getApplicationContext();
@@ -462,14 +480,27 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         } }, "wifidot-quality").start();
     }
 
+    /** Data saver: one round of 15 tiny packets (about 2 KB) on request. */
+    private void measureOnce() {
+        final Context app = getApplicationContext();
+        qualityValue.setText("Measuring…");
+        new Thread(new Runnable() { public void run() {
+            android.net.Network net = Checker.qualityNetwork(app);
+            final Quality.Result res = net == null ? null : QUALITY.measure(net);
+            handler.post(new Runnable() { public void run() { lastQuality = res; showQuality(); } });
+        } }, "wifidot-quality-once").start();
+    }
+
     private void showQuality() {
         if (qualityValue == null) return;
+        qMeasure.setVisibility(Prefs.dataSaver(this) ? View.VISIBLE : View.GONE);
         Quality.Result q = lastQuality;
         String st = prefs.getString("state", "");
         int level;
         if (q == null || q.sent == 0) {
             boolean none = "nowifi".equals(st);
-            qualityValue.setText(none ? "No connection" : "Measuring…");
+            qualityValue.setText(none ? "No connection"
+                    : Prefs.dataSaver(this) ? "Tap Measure (Data saver)" : "Measuring…");
             qualityValue.setTextColor(cSub);
             level = 0;
             qLatency.setText("—"); qJitter.setText("—"); qLoss.setText("—"); qNote.setText("");
@@ -494,40 +525,128 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         }
     }
 
-    // ---------------------------------------------------------------- speed test
+    // ---------------------------------------------------------------- speed test (M-Lab ndt7)
+
+    /** Two speedometers (download / upload), the start button and the data note. */
+    private View speedPanel() {
+        LinearLayout box = vbox();
+        box.setPadding(px(14), px(10), px(14), px(14));
+        LinearLayout gauges = hbox();
+        gDown = new Gauge(this, "Download", 0xFF2F80ED, cLine, cText, cSub);
+        gUp = new Gauge(this, "Upload", 0xFF9B51E0, cLine, cText, cSub);
+        LinearLayout.LayoutParams g1 = new LinearLayout.LayoutParams(0, -2, 1);
+        g1.rightMargin = px(6);
+        LinearLayout.LayoutParams g2 = new LinearLayout.LayoutParams(0, -2, 1);
+        g2.leftMargin = px(6);
+        gauges.addView(gDown, g1);
+        gauges.addView(gUp, g2);
+        box.addView(gauges);
+
+        LinearLayout bar = hbox();
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(px(4), px(8), 0, 0);
+        LinearLayout texts = vbox();
+        testServer = text("Speed test by M-Lab (ndt7)", 13, cText, false);
+        testInfo = text("", 12, cSub, false);
+        texts.addView(testServer);
+        texts.addView(testInfo);
+        bar.addView(texts, new LinearLayout.LayoutParams(0, -2, 1));
+        testPill = smallPill("Start", new View.OnClickListener() {
+            public void onClick(View v) { toggleSpeedTest(); }
+        });
+        testLabel = (TextView) ((ViewGroup) testPill).getChildAt(0);
+        bar.addView(testPill);
+        box.addView(bar);
+        return box;
+    }
+
+    /** Rough data use of one test: ~10 s download + ~10 s upload at the given speeds. */
+    private static double estimateMb(double down, double up) {
+        return (down + up) * 10 / 8 * 1.1;
+    }
+
+    private String dataWarning() {
+        float down = prefs.getFloat("st_down", -1), up = prefs.getFloat("st_up", -1);
+        if (down > 0) {
+            return String.format(Locale.US, "One test uses about %.0f MB at your last speeds "
+                    + "(10 s download + 10 s upload at full speed).", estimateMb(down, Math.max(0, up)));
+        }
+        return "One test downloads and uploads at full speed for about 10 s each: roughly 100–300 MB "
+                + "on a typical Starlink connection, up to about 1.3 GB on a 1 Gbit/s line.";
+    }
 
     private void toggleSpeedTest() {
-        if (test != null) { test.cancel(); return; }
+        if (test != null) { test.cancel(); testLabel.setText("Stopping…"); return; }
+        if (Prefs.dataSaver(this)) { testInfo.setText("Turned off by Data saver (Settings below)"); return; }
+        final android.net.Network net = Checker.qualityNetwork(this);
         String st = prefs.getString("state", "");
-        boolean ok = "online".equals(st) || "hotspot".equals(st) && "online".equals(prefs.getString("hs_net", ""));
-        if (!ok) {
-            downloadValue.setText("Needs a working internet connection");
-            return;
-        }
-        test = new SpeedTest();
+        boolean ok = net != null && ("online".equals(st)
+                || "hotspot".equals(st) && "online".equals(prefs.getString("hs_net", "")));
+        if (!ok) { testInfo.setText("Needs a working internet connection over Wi-Fi or the hotspot"); return; }
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Run speed test?")
+                .setMessage(dataWarning() + "\n\nOn a metered connection (satellite plan, mobile data via "
+                        + "the hotspot) this counts towards your data allowance.")
+                .setPositiveButton("Start", new android.content.DialogInterface.OnClickListener() {
+                    public void onClick(android.content.DialogInterface d, int w) { startSpeedTest(net); }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void startSpeedTest(android.net.Network net) {
+        test = new Ndt7();
         testLabel.setText("Stop");
-        downloadValue.setText("Testing…");
-        test.run(Checker.testNetwork(this), new SpeedTest.Listener() {
-            public void progress(final double mbps) {
-                handler.post(new Runnable() { public void run() {
-                    if (test != null) downloadValue.setText("Testing… " + fmtMbps(mbps));
-                } });
-            }
-            public void done(final double mbps, final boolean ok) {
-                handler.post(new Runnable() { public void run() {
+        testServer.setText("Finding the nearest M-Lab server…");
+        testInfo.setText("");
+        gDown.setValue(-1);
+        gUp.setValue(-1);
+        test.run(net, new Ndt7.Listener() {
+            public void server(final String name) { ui(new Runnable() { public void run() {
+                testServer.setText(name); testInfo.setText("Testing download…"); } }); }
+            public void download(final double mbps, final boolean done) { ui(new Runnable() { public void run() {
+                gDown.setValue(mbps); if (done) testInfo.setText("Testing upload…"); } }); }
+            public void upload(final double mbps, final boolean done) { ui(new Runnable() { public void run() {
+                gUp.setValue(mbps); } }); }
+            public void finished(final double down, final double up, final long bytes, final String error) {
+                ui(new Runnable() { public void run() {
                     test = null;
-                    testLabel.setText("Test");
-                    if (ok) prefs.edit().putFloat("dl_mbps", (float) mbps)
-                            .putLong("dl_time", System.currentTimeMillis()).apply();
-                    else downloadValue.setText("Test failed — try again");
-                    if (ok) refresh();
+                    testLabel.setText("Start");
+                    if (error == null && down > 0) {
+                        prefs.edit().putFloat("st_down", (float) down).putFloat("st_up", (float) Math.max(0, up))
+                                .putLong("st_time", System.currentTimeMillis()).putLong("st_bytes", bytes)
+                                .putString("st_server", testServer.getText().toString()).apply();
+                        showSpeedResult();
+                    } else {
+                        testInfo.setText("Test " + (error != null ? "failed: " + error : "failed")
+                                + String.format(Locale.US, " · used %.0f MB", bytes / 1e6));
+                    }
                 } });
             }
         });
     }
 
-    private static String fmtMbps(double m) {
-        return m >= 100 ? String.format(Locale.US, "%.0f Mbps", m) : String.format(Locale.US, "%.1f Mbps", m);
+    private void ui(Runnable r) { handler.post(r); }
+
+    /** Last result on the gauges (when no test is running) and the data note. */
+    private void showSpeedResult() {
+        if (gDown == null || test != null) return;
+        boolean saver = Prefs.dataSaver(this);
+        testPill.setAlpha(saver ? 0.4f : 1f);
+        float down = prefs.getFloat("st_down", -1), up = prefs.getFloat("st_up", -1);
+        long t = prefs.getLong("st_time", 0), bytes = prefs.getLong("st_bytes", 0);
+        gDown.setValue(down > 0 ? down : -1);
+        gUp.setValue(down > 0 ? up : -1);
+        if (saver) {
+            testServer.setText("Speed test by M-Lab (ndt7)");
+            testInfo.setText("Turned off by Data saver");
+        } else if (down > 0) {
+            testServer.setText(prefs.getString("st_server", "M-Lab"));
+            testInfo.setText(ago(t) + String.format(Locale.US, " · used %.0f MB · tap Start for a new test", bytes / 1e6));
+        } else {
+            testServer.setText("Speed test by M-Lab (ndt7)");
+            testInfo.setText("Uses a lot of data — see the estimate before it starts");
+        }
     }
 
     private static String ago(long t) {
