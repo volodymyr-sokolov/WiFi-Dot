@@ -15,7 +15,7 @@ public class WifiDotWidget extends AppWidgetProvider {
 
     @Override
     public void onEnabled(Context ctx) {
-        Checker.registerNetworkCallback(ctx);
+        Checker.registerCallbackOnce(ctx);
         RefreshJob.schedule(ctx);
     }
 

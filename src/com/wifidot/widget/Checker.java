@@ -38,35 +38,62 @@ public final class Checker {
     private static boolean running = false;
     private static boolean again = false;
     /** Callers waiting for the current check (their receiver/job stays alive until it's done). */
-    private static final java.util.List<Runnable> waiting = new java.util.ArrayList<Runnable>();
+    private static final java.util.List<Waiter> waiting = new java.util.ArrayList<Waiter>();
     private static boolean callbackRegistered = false;
+    /** When this process registered the callback (its immediate "available" echo is ignored). */
+    static volatile long callbackRegisteredAt = -1;
 
     private Checker() {}
 
-    /** Run a check in the background; done (may be null) is called when finished. */
+    /** A caller waiting for a check: released after the first pass that started after it arrived. */
+    private static final class Waiter {
+        final Runnable done; final long needPass;
+        final java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
+        Waiter(Runnable d, long p) { done = d; needPass = p; }
+        void fire() { if (fired.compareAndSet(false, true)) { try { done.run(); } catch (Throwable ignored) {} } }
+    }
+    private static long passesStarted = 0;   // guarded by LOCK
+    private static final long MAX_WAIT_MS = 45_000L;   // receivers/jobs must finish well before Android's limit
+    private static final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /**
+     * Run a check in the background. Triggers that arrive while a check runs are coalesced into
+     * one more pass. done (may be null) is called after the first complete pass that started after
+     * this call — and in any case after 45 s, so a broadcast or job never overstays.
+     */
     static void runAsync(final Context ctx, final Runnable done) {
         final Context app = ctx.getApplicationContext();
+        final Waiter w;
         synchronized (LOCK) {
-            if (done != null) waiting.add(done);
-            if (running) { again = true; return; }   // coalesce: one more pass after the current one
+            w = done == null ? null : new Waiter(done, passesStarted + 1);
+            if (w != null) waiting.add(w);
+            if (running) again = true;
+        }
+        if (w != null) MAIN.postDelayed(new Runnable() { public void run() { w.fire(); } }, MAX_WAIT_MS);
+        synchronized (LOCK) {
+            if (running) return;
             running = true;
+            again = false;
         }
         new Thread(new Runnable() {
             @Override public void run() {
-                java.util.List<Runnable> finished;
                 while (true) {
+                    long pass;
+                    synchronized (LOCK) { pass = ++passesStarted; }
                     try { checkNow(app); } catch (Throwable ignored) {}
+                    java.util.List<Waiter> ready = new java.util.ArrayList<Waiter>();
+                    boolean stop;
                     synchronized (LOCK) {
-                        if (!again) {
-                            running = false;
-                            finished = new java.util.ArrayList<Runnable>(waiting);
-                            waiting.clear();
-                            break;
+                        for (java.util.Iterator<Waiter> it = waiting.iterator(); it.hasNext(); ) {
+                            Waiter x = it.next();
+                            if (x.needPass <= pass) { ready.add(x); it.remove(); }
                         }
-                        again = false;
+                        stop = !again;
+                        if (stop) running = false; else again = false;
                     }
+                    for (Waiter x : ready) x.fire();
+                    if (stop) break;
                 }
-                for (Runnable r : finished) { try { r.run(); } catch (Throwable ignored) {} }
             }
         }, "wifidot-check").start();
     }
@@ -82,6 +109,7 @@ public final class Checker {
 
     private static void checkBody(Context ctx) {
         Cleanup.run(ctx);
+        Clock.checkBoot(ctx);
         registerCallbackOnce(ctx);
         Events.register(ctx);
         ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -106,6 +134,20 @@ public final class Checker {
             boolean online = hasInternet(wifi);
             NetworkCapabilities wc = cm.getNetworkCapabilities(wifi);
             wifiValidated = wc != null && wc.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            if (online) {
+                p.edit().remove("fail_since").apply();
+            } else if (blockedForUs(cm, wifi)) {
+                online = keepPrevious(p, true);       // the phone blocks our background access: not an outage
+            } else if (wifiValidated) {
+                // Probes fail but Android still says the Wi-Fi works: could be our access being
+                // throttled. Call it an outage only if it lasts a full minute.
+                long since = p.getLong("fail_since", -1);
+                if (since < 0) { since = Clock.now(); p.edit().putLong("fail_since", since).apply(); }
+                if (Clock.now() - since < FAIL_VALIDATED_MS) {
+                    online = keepPrevious(p, true);
+                    Poller.scheduleIn(ctx, 20_000);
+                }
+            }
             String g = gateway(ctx, cm, wifi);
             gw = g == null ? "" : g;
             netKey = wifi.toString() + "@" + gw;   // same router on a different network → re-detect
@@ -135,9 +177,8 @@ public final class Checker {
 
         String prevState = p.getString("state", "");
         boolean wifiState = "online".equals(state) || "offline".equals(state);
-        if (wifiState && (!("online".equals(prevState) || "offline".equals(prevState))
-                || !netKey.equals(p.getString("net_key", "")))) {
-            p.edit().putLong("wifi_since", System.currentTimeMillis()).apply();   // just (re)connected
+        if (wifiState && !("online".equals(prevState) || "offline".equals(prevState))) {
+            p.edit().putLong("wifi_since", Clock.now()).apply();   // Wi-Fi just (re)connected
         }
         boolean changed = !state.equals(prevState)
                 || !hsNet.equals(p.getString("hs_net", ""))
@@ -175,12 +216,17 @@ public final class Checker {
     private static Network findWifi(ConnectivityManager cm) {
         Network active = cm.getActiveNetwork();
         if (active != null && isWifiClient(cm.getNetworkCapabilities(active))) return active;
+        // With two Wi-Fi client networks (dual Wi-Fi), pick deterministically:
+        // validated first, then unrestricted, then the lowest network id.
         Network best = null;
+        int bestScore = -1;
         for (Network n : cm.getAllNetworks()) {
             NetworkCapabilities c = cm.getNetworkCapabilities(n);
             if (!isWifiClient(c)) continue;
-            // With two Wi-Fi client networks (dual Wi-Fi), pick consistently: the unrestricted one.
-            if (best == null || c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) best = n;
+            int score = (c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) ? 2 : 0)
+                    + (c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED) ? 1 : 0);
+            if (best == null || score > bestScore
+                    || score == bestScore && netId(n) < netId(best)) { best = n; bestScore = score; }
         }
         return best;
     }
@@ -189,6 +235,10 @@ public final class Checker {
      * A Wi-Fi client connection. The hotspot / Wi-Fi Direct show up as local-only Wi-Fi networks
      * without the INTERNET capability — those are not "Wi-Fi without internet".
      */
+    private static long netId(Network n) {
+        try { return Long.parseLong(n.toString()); } catch (Throwable e) { return Long.MAX_VALUE; }
+    }
+
     private static boolean isWifiClient(NetworkCapabilities c) {
         return c != null && c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
                 && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
@@ -218,9 +268,41 @@ public final class Checker {
 
     // ---------- Internet ----------
 
+    private static final long FAIL_VALIDATED_MS = 60_000L;
+    private static final long PROBE_DEADLINE_MS = 8_000L;
+
+    /** Previous Wi-Fi state, or the fallback if there was none. */
+    private static boolean keepPrevious(SharedPreferences p, boolean fallback) {
+        String prev = p.getString("state", "");
+        if ("online".equals(prev)) return true;
+        if ("offline".equals(prev)) return false;
+        return fallback;
+    }
+
+    /** Is the system blocking this app's traffic on that network (data saver / background restriction)? */
+    @SuppressWarnings("deprecation")
+    private static boolean blockedForUs(ConnectivityManager cm, Network n) {
+        try {
+            android.net.NetworkInfo ni = cm.getNetworkInfo(n);
+            return ni != null && ni.getDetailedState() == android.net.NetworkInfo.DetailedState.BLOCKED;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
     static volatile long lastLatencyMs = -1;
 
-    private static boolean hasInternet(Network wifi) {
+    /** Probes with an overall deadline (DNS lookups aren't covered by the socket timeouts). */
+    private static boolean hasInternet(final Network net) {
+        final boolean[] ok = {false};
+        Thread t = new Thread(new Runnable() { public void run() { ok[0] = probe(net); } }, "wifidot-probe");
+        t.setDaemon(true);
+        t.start();
+        try { t.join(PROBE_DEADLINE_MS); } catch (InterruptedException ignored) {}
+        return ok[0];
+    }
+
+    private static boolean probe(Network wifi) {
         lastLatencyMs = -1;
         String[] urls = {
                 "http://connectivitycheck.gstatic.com/generate_204",
@@ -413,8 +495,7 @@ public final class Checker {
     static synchronized void registerCallbackOnce(Context ctx) {
         if (callbackRegistered) return;
         callbackRegistered = true;
-        ctx.getSharedPreferences(PREFS, 0).edit()
-                .putLong("cb_registered_at", android.os.SystemClock.elapsedRealtime()).apply();
+        callbackRegisteredAt = android.os.SystemClock.elapsedRealtime();
         registerNetworkCallback(ctx);
     }
 

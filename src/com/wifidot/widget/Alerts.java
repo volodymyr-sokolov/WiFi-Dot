@@ -46,7 +46,7 @@ final class Alerts {
     static void afterCheck(Context ctx) {
         SharedPreferences p = ctx.getSharedPreferences(Checker.PREFS, 0);
         String state = p.getString("state", "");
-        long now = System.currentTimeMillis();
+        long now = Clock.now();   // monotonic; timers from a previous boot are cleared by Clock
 
         if ("hotspot".equals(state)) { cancel(ctx); clearPending(p); return; }   // never with the hotspot on
         if (!"online".equals(state) && !"offline".equals(state)) { clearPending(p); return; }
@@ -75,7 +75,7 @@ final class Alerts {
         p.edit().putString("alerted_state", state).putLong("last_alert_at", now).apply();
         clearPending(p);
         if (!enabled(ctx)) return;
-        if (LockScreen.enabled(ctx) && LockScreen.locked(ctx)) { cancel(ctx); return; } // the card shows it
+        if (LockScreen.isShowing(ctx)) { cancel(ctx); return; }   // the lock-screen card shows it
         show(ctx, p, state);
     }
 

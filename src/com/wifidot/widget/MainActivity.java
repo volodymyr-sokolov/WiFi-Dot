@@ -82,7 +82,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         getWindow().setBackgroundDrawable(new ColorDrawable(cBg));
         setContentView(buildUi());
 
-        Checker.registerNetworkCallback(this);
+        Checker.registerCallbackOnce(this);
         RefreshJob.schedule(this);
         Cleanup.run(this);
         if (Alerts.enabled(this)) askNotifications();

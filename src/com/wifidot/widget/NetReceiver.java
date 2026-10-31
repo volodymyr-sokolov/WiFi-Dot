@@ -14,9 +14,9 @@ public class NetReceiver extends BroadcastReceiver {
         String a = intent.getAction();
         if (ACTION_NET.equals(a)) {
             // Each callback registration is answered at once with "available" — not a real change.
-            long reg = ctx.getSharedPreferences(Checker.PREFS, 0).getLong("cb_registered_at", -1);
+            long reg = Checker.callbackRegisteredAt;   // same process; restarts with it
             long now = SystemClock.elapsedRealtime();
-            if (reg >= 0 && reg <= now && now - reg < 30_000L) return;
+            if (reg >= 0 && now - reg < 10_000L) return;   // only the echo right after registering
         }
         LockScreen.update(ctx);   // remove a stale lock-screen card right away if the phone was unlocked
         RefreshJob.schedule(ctx);
