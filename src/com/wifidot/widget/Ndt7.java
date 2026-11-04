@@ -65,21 +65,59 @@ final class Ndt7 {
         return t;
     }
 
-    void run(final Network net, final Listener l) {
-        new Thread(new Runnable() { public void run() { test(net, l); } }, "wifidot-ndt7").start();
+    /** A test point offered in the list: site code, place and distance (km, or -1 if unknown). */
+    static final class Server {
+        final String machine, site, place;
+        final double km;
+        Server(String machine, String place, double km) {
+            this.machine = machine; this.site = Sites.site(machine); this.place = place; this.km = km;
+        }
+        /** "Frankfurt, DE (fra05) · ~410 km" */
+        String label() {
+            String s = (place.length() > 2 ? place + " (" + site + ")" : site);
+            return km >= 0 ? s + " · ~" + Math.round(km) + " km" : s;
+        }
     }
 
-    private void test(Network net, Listener l) {
+    /**
+     * Up to five nearby M-Lab servers (Locate API v2 returns up to four), with distances where
+     * known: the phone's approximate position comes from Locate's X-Locate-Clientlatlon header
+     * (IP-based, no location permission needed), the server's from its site code.
+     */
+    static java.util.List<Server> servers(Network net) throws Exception {
+        Located loc = locate(net, null);
+        java.util.List<Server> out = new java.util.ArrayList<Server>();
+        for (int i = 0; i < loc.results.length() && out.size() < 5; i++) {
+            JSONObject r = loc.results.getJSONObject(i);
+            out.add(server(r, loc.client));
+        }
+        return out;
+    }
+
+    private static Server server(JSONObject r, double[] client) {
+        String machine = r.optString("machine", "");
+        JSONObject l = r.optJSONObject("location");
+        String place = l == null ? "" : (l.optString("city", "") + ", " + l.optString("country", ""));
+        double[] pos = Sites.coords(machine);
+        double km = client != null && pos != null ? Sites.km(client[0], client[1], pos[0], pos[1]) : -1;
+        return new Server(machine, place, km);
+    }
+
+    /** Run the test on the nearest server, or on {@code site} (e.g. "fra05") if given. */
+    void run(final Network net, final String site, final Listener l) {
+        new Thread(new Runnable() { public void run() { test(net, site, l); } }, "wifidot-ndt7").start();
+    }
+
+    private void test(Network net, String site, Listener l) {
         double down = -1, up = -1;
         String error = null;
         try {
             if (net == null) throw new IOException("No connection to test");
-            JSONObject target = locate(net);
-            JSONObject loc = target.optJSONObject("location");
-            String where = loc == null ? "" : (loc.optString("city", "") + ", " + loc.optString("country", ""));
-            String machine = target.optString("machine", "M-Lab");
-            String site = machine.contains("-") ? machine.split("\\.")[0].replaceAll("^mlab\\d-", "") : machine;
-            l.server("M-Lab · " + (where.length() > 2 ? where + " (" + site + ")" : site));
+            // Fresh tokens every time: the chosen site, falling back to the nearest server.
+            Located loc;
+            try { loc = locate(net, site); } catch (IOException e) { if (site == null) throw e; loc = locate(net, null); }
+            JSONObject target = loc.results.getJSONObject(0);
+            l.server("M-Lab · " + server(target, loc.client).label());
             JSONObject urls = target.getJSONObject("urls");
             if (!cancel) down = download(net, urls.getString("wss:///ndt/v7/download"), l);
             if (!cancel) up = upload(net, urls.getString("wss:///ndt/v7/upload"), l);
@@ -93,19 +131,40 @@ final class Ndt7 {
 
     // ------------------------------------------------------------------ locate
 
-    private JSONObject locate(Network net) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) net.openConnection(new URL(LOCATE));
+    private static final class Located {
+        JSONArray results;
+        double[] client;   // [lat, lon] from X-Locate-Clientlatlon, or null
+    }
+
+    private static Located locate(Network net, String site) throws Exception {
+        String url = LOCATE + (site != null ? "&site=" + java.net.URLEncoder.encode(site, "UTF-8") : "");
+        HttpURLConnection c = (HttpURLConnection) net.openConnection(new URL(url));
         c.setConnectTimeout(8000);
         c.setReadTimeout(8000);
         c.setRequestProperty("User-Agent", "wifidot-android/" + BuildInfo.VERSION);
         int code = c.getResponseCode();
         if (code == 429) throw new IOException("M-Lab is busy, try again in a minute");
         if (code != 200) throw new IOException("Server lookup failed (HTTP " + code + ")");
+        Located out = new Located();
+        out.client = latLon(c.getHeaderField("X-Locate-Clientlatlon"));
         String body = readAll(c.getInputStream());
         c.disconnect();
-        JSONArray results = new JSONObject(body).getJSONArray("results");
-        if (results.length() == 0) throw new IOException("No M-Lab server available");
-        return results.getJSONObject(0);
+        out.results = new JSONObject(body).getJSONArray("results");
+        if (out.results.length() == 0) throw new IOException("No M-Lab server available");
+        return out;
+    }
+
+    /** "50.11,8.68" → {50.11, 8.68}; null if missing/invalid. */
+    static double[] latLon(String h) {
+        if (h == null) return null;
+        try {
+            String[] p = h.split(",");
+            double lat = Double.parseDouble(p[0].trim()), lon = Double.parseDouble(p[1].trim());
+            if (Math.abs(lat) > 90 || Math.abs(lon) > 180 || (lat == 0 && lon == 0)) return null;
+            return new double[]{lat, lon};
+        } catch (Throwable e) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ download

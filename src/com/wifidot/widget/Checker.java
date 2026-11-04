@@ -164,7 +164,7 @@ public final class Checker {
             netKey = wifi.toString() + "@" + gw;   // same router on a different network → re-detect
             long now = System.currentTimeMillis();
             boolean cached = netKey.equals(p.getString("net_key", null))
-                    && now - p.getLong("detected2", 0) < 10 * 60 * 1000L
+                    && now - p.getLong("detected3", 0) < 10 * 60 * 1000L
                     && p.getString("url", "").length() > 0;
             if (cached) {
                 // same router — do not re-probe it every 10 seconds
@@ -175,12 +175,12 @@ public final class Checker {
                 } else if (g != null) {
                     url = "http://" + g + "/";
                     // Data saver: don't download the router's page just to recognise its brand.
-                    String vendor = Prefs.dataSaver(ctx) ? null : detectVendor(wifi, url);
+                    String vendor = Prefs.dataSaver(ctx) ? null : Router.detect(wifi, g);
                     label = vendor != null ? vendor : g;
                 } else {
                     label = "Wi-Fi"; url = "";
                 }
-                p.edit().putLong("detected2", now).apply();
+                p.edit().putLong("detected3", now).apply();
             }
             state = wifiUnknown ? "" : online ? "online" : "offline";   // "" = grey "Checking…"
         }
@@ -194,13 +194,26 @@ public final class Checker {
         if (wifiState && !("online".equals(prevState) || "offline".equals(prevState))) {
             p.edit().putLong("wifi_since", Clock.now()).apply();   // Wi-Fi just (re)connected
         }
+        // Network name and signal (name only with location permission; hidden when unknown).
+        String ssid = "", hsName = "";
+        int rssi = 0;
+        if ("hotspot".equals(state)) {
+            String h = WifiDetails.hotspotName(ctx);
+            hsName = h == null ? "" : h;
+        } else if (wifi != null) {
+            String n = WifiDetails.ssid(ctx);
+            ssid = n == null ? "" : n;
+            rssi = WifiDetails.rssi(ctx);
+        }
         boolean changed = !state.equals(prevState)
+                || !ssid.equals(p.getString("ssid", "")) || !hsName.equals(p.getString("hs_name", ""))
                 || !hsNet.equals(p.getString("hs_net", ""))
                 || !label.equals(p.getString("label", ""))
                 || !url.equals(p.getString("url", ""));
         p.edit().putString("state", state).putString("label", label).putString("url", url)
                 .putString("gw", gw).putString("net_key", netKey).putString("hs_net", hsNet)
                 .putBoolean("wifi_validated", wifiValidated)
+                .putString("ssid", ssid).putString("hs_name", hsName).putInt("rssi", rssi)
                 .putLong("latency", "online".equals(state) || "online".equals(hsNet) ? lastLatencyMs : -1)
                 .putLong("time", System.currentTimeMillis()).apply();
         // Only a real measurement renews "recent": a kept/assumed result must age out after 2 min.
@@ -210,8 +223,26 @@ public final class Checker {
             render(ctx);
         }
         // Lock-screen card first (so an unlocked phone never shows it next to an alert), then alerts.
+        // Quality for the lock-screen card: one light round (15 tiny packets) per check, only when
+        // the card is on, Data saver is off and there is internet to measure.
+        try {
+            if (LockScreen.enabled(ctx) && !Prefs.dataSaver(ctx)
+                    && ("online".equals(state) || "online".equals(hsNet))) {
+                Network qn = qualityNetwork(ctx);
+                if (qn != null) storeQuality(ctx, BG_QUALITY.measure(qn));
+            }
+        } catch (Throwable ignored) {}
         try { LockScreen.update(ctx); } catch (Throwable ignored) {}
         try { Alerts.afterCheck(ctx); } catch (Throwable ignored) {}
+    }
+
+    private static final Quality BG_QUALITY = new Quality();
+
+    /** Remember the latest quality result (shown on the lock screen while fresh). */
+    static void storeQuality(Context ctx, Quality.Result r) {
+        if (r == null || r.sent == 0 || r.level == 0) return;
+        ctx.getSharedPreferences(PREFS, 0).edit().putInt("q_score", r.score).putInt("q_level", r.level)
+                .putLong("q_at", Clock.now()).apply();
     }
 
     /**
@@ -374,58 +405,8 @@ public final class Checker {
 
 
 
-    /** Server header + start of the page, lower-cased, or null. */
-    private static String fetchHead(Network net, String url, int timeout) {
-        HttpURLConnection c = null;
-        try {
-            c = (HttpURLConnection) net.openConnection(new URL(url));
-            c.setConnectTimeout(timeout);
-            c.setReadTimeout(timeout);
-            c.setInstanceFollowRedirects(true);
-            int code = c.getResponseCode();
-            StringBuilder sb = new StringBuilder();
-            String server = c.getHeaderField("Server");
-            String realm = c.getHeaderField("WWW-Authenticate");
-            String loc = c.getHeaderField("Location");
-            if (server != null) sb.append(server).append('\n');
-            if (realm != null) sb.append(realm).append('\n');
-            if (loc != null) sb.append(loc).append('\n');
-            InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-            if (in != null) {
-                byte[] buf = new byte[16384];
-                int total = 0, r;
-                while (total < buf.length && (r = in.read(buf, total, buf.length - total)) > 0) total += r;
-                in.close();
-                sb.append(new String(buf, 0, total, "UTF-8"));
-            }
-            return sb.toString().toLowerCase(Locale.ROOT);
-        } catch (Throwable e) {
-            return null;
-        } finally {
-            if (c != null) c.disconnect();
-        }
-    }
 
-    private static final String[][] VENDORS = {
-            {"tp-link", "TP-Link"}, {"tplink", "TP-Link"}, {"mercusys", "Mercusys"},
-            {"keenetic", "Keenetic"}, {"zyxel", "Zyxel"}, {"asus", "ASUS"},
-            {"mikrotik", "MikroTik"}, {"routeros", "MikroTik"}, {"netgear", "Netgear"},
-            {"d-link", "D-Link"}, {"dlink", "D-Link"}, {"huawei", "Huawei"},
-            {"zte", "ZTE"}, {"miwifi", "Xiaomi"}, {"xiaomi", "Xiaomi"},
-            {"tenda", "Tenda"}, {"ubiquiti", "Ubiquiti"}, {"unifi", "UniFi"},
-            {"linksys", "Linksys"}, {"luci", "OpenWrt"}, {"openwrt", "OpenWrt"},
-            {"fritz", "FRITZ!Box"}, {"netis", "Netis"}, {"cudy", "Cudy"},
-            {"totolink", "TOTOLINK"}, {"tenda", "Tenda"}, {"eero", "eero"},
-            {"google wifi", "Google"}, {"nest wifi", "Google"}, {"sagemcom", "Sagemcom"},
-            {"technicolor", "Technicolor"}, {"arris", "Arris"}, {"ruijie", "Ruijie"},
-    };
 
-    private static String detectVendor(Network wifi, String url) {
-        String page = fetchHead(wifi, url, 2500);
-        if (page == null) return null;
-        for (String[] v : VENDORS) if (page.contains(v[0])) return v[1];
-        return null;
-    }
 
     // ---------- Widget ----------
 
@@ -437,7 +418,12 @@ public final class Checker {
         RemoteViews rv = new RemoteViews(ctx.getPackageName(), R.layout.widget);
         rv.setImageViewResource(R.id.wifi, iconFor(p));
         rv.setInt(R.id.wifi, "setColorFilter", colorFor(state));
-        rv.setTextViewText(R.id.label, label);
+        // Transparent widget: pick the label colour that contrasts with the wallpaper.
+        boolean dark = lightWallpaper(ctx);
+        int show = dark ? R.id.label_dark : R.id.label_light, hide = dark ? R.id.label_light : R.id.label_dark;
+        rv.setTextViewText(show, label);
+        rv.setViewVisibility(show, android.view.View.VISIBLE);
+        rv.setViewVisibility(hide, android.view.View.GONE);
 
         Intent menu = new Intent(ctx, MenuActivity.class);
         menu.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -451,6 +437,26 @@ public final class Checker {
         } catch (Throwable ignored) {} // widget turned off
 
         if (Build.VERSION.SDK_INT >= 24) WifiTileService.requestUpdate(ctx);
+    }
+
+    /** Is the wallpaper light (so a dark label reads better)? Android 8.1+; else assume dark. */
+    static boolean lightWallpaper(Context ctx) {
+        if (Build.VERSION.SDK_INT < 27) return false;
+        try {
+            android.app.WallpaperManager wm = android.app.WallpaperManager.getInstance(ctx);
+            Object colors = wm.getClass().getMethod("getWallpaperColors", int.class).invoke(wm, 1 /* FLAG_SYSTEM */);
+            if (colors == null) return false;
+            if (Build.VERSION.SDK_INT >= 31) {   // the system's own hint, where available
+                int hints = (Integer) colors.getClass().getMethod("getColorHints").invoke(colors);
+                return (hints & 1 /* HINT_SUPPORTS_DARK_TEXT */) != 0;
+            }
+            Object primary = colors.getClass().getMethod("getPrimaryColor").invoke(colors);
+            int c = (Integer) primary.getClass().getMethod("toArgb").invoke(primary);
+            double lum = (0.2126 * ((c >> 16) & 0xFF) + 0.7152 * ((c >> 8) & 0xFF) + 0.0722 * (c & 0xFF)) / 255.0;
+            return lum > 0.6;
+        } catch (Throwable e) {
+            return false;
+        }
     }
 
     static final int GREEN = 0xFF2ECC40, RED = 0xFFFF3B30, GREY = 0xFF9E9E9E, BLUE = 0xFF2F80ED;

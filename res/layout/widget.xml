@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Transparent widget: the icon carries its own colour; the label is light or dark depending on
+     the wallpaper (chosen in Checker.render), each with a soft shadow for contrast. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
     android:layout_width="match_parent"
@@ -6,21 +8,36 @@
     android:orientation="vertical"
     android:gravity="center"
     android:padding="4dp"
-    android:background="@drawable/widget_bg">
+    android:background="@android:color/transparent">
 
     <ImageView android:id="@+id/wifi"
-        android:layout_width="32dp" android:layout_height="32dp"
+        android:layout_width="34dp" android:layout_height="34dp"
         android:layout_gravity="center_horizontal"
         android:src="@drawable/ic_stat_ok"
         android:tint="#FF9E9E9E" />
 
-    <TextView android:id="@+id/label"
+    <TextView android:id="@+id/label_light"
         android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:layout_marginTop="1dp"
+        android:layout_marginTop="2dp"
         android:gravity="center"
         android:textColor="#FFFFFFFF"
-        android:textSize="9sp"
+        android:textSize="11sp"
+        android:fontFamily="sans-serif-medium"
+        android:shadowColor="#CC000000" android:shadowRadius="4" android:shadowDx="0" android:shadowDy="1"
         android:maxLines="1"
         android:ellipsize="end"
+        android:text="…" />
+
+    <TextView android:id="@+id/label_dark"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="center"
+        android:textColor="#E6000000"
+        android:textSize="11sp"
+        android:fontFamily="sans-serif-medium"
+        android:shadowColor="#B3FFFFFF" android:shadowRadius="4" android:shadowDx="0" android:shadowDy="1"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:visibility="gone"
         android:text="…" />
 </LinearLayout>

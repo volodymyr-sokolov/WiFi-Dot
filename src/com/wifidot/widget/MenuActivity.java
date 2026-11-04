@@ -57,7 +57,15 @@ public class MenuActivity extends Activity {
         ht.setOrientation(LinearLayout.VERTICAL);
         ht.setPadding(px(14), 0, 0, 0);
         boolean hs = "hotspot".equals(state);
-        if (hs) label = "offline".equals(p.getString("hs_net", "")) ? "No internet to share" : "Sharing your connection";
+        if (hs) {
+            String hsName = p.getString("hs_name", "");
+            label = hsName.length() > 0 ? hsName
+                    : "offline".equals(p.getString("hs_net", "")) ? "No internet to share" : "Sharing your connection";
+        } else {
+            // "MyWiFi · Starlink": the network name before the router brand, when known.
+            String ssid = p.getString("ssid", "");
+            if (ssid.length() > 0) label = label.length() > 0 && !label.equals(ssid) ? ssid + " · " + label : ssid;
+        }
         String title = hs ? "Hotspot on" : "online".equals(state) ? "Internet OK" : "offline".equals(state) ? "No internet"
                 : "nowifi".equals(state) ? "Wi-Fi is off" : "Checking…";
         ht.addView(text(title, 18, cText, true));

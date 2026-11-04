@@ -119,14 +119,32 @@ final class LockScreen {
         String state = p.getString("state", "");
         String label = p.getString("label", "");
         String title, text;
-        if ("online".equals(state)) { title = "Internet OK"; text = label; }
-        else if ("offline".equals(state)) { title = "No internet"; text = label; }
-        else if ("hotspot".equals(state)) {
+        if ("hotspot".equals(state)) {
+            // Hotspot: only its name (hidden if the phone doesn't reveal it).
+            String name = p.getString("hs_name", "");
             title = "Hotspot on";
-            text = "offline".equals(p.getString("hs_net", "")) ? "No internet to share" : "Sharing your connection";
+            text = name;
+        } else {
+            title = "online".equals(state) ? "Internet OK" : "offline".equals(state) ? "No internet"
+                    : "nowifi".equals(state) ? "Wi-Fi is off" : "Checking…";
+            // "MyWiFi · Starlink" then "Signal 3/4 (−62 dBm) · Quality 94/100" — each part only if known.
+            String ssid = p.getString("ssid", "");
+            if (!"nowifi".equals(state)) {
+                if (ssid.length() > 0) title += " · " + ssid;
+                java.util.List<String> parts = new java.util.ArrayList<String>();
+                if (label.length() > 0 && !label.equals(ssid)) parts.add(label);
+                int rssi = p.getInt("rssi", 0), bars = WifiDetails.bars(rssi);
+                if (bars >= 0) parts.add("Signal " + bars + "/4 (" + rssi + " dBm)");
+                long qAt = p.getLong("q_at", -1);
+                long age = Clock.now() - qAt;
+                if (qAt >= 0 && age >= 0 && age < 10 * 60_000L && "online".equals(state)) {
+                    parts.add("Quality " + p.getInt("q_score", 0) + "/100");
+                }
+                text = android.text.TextUtils.join(" · ", parts);
+            } else {
+                text = "";
+            }
         }
-        else if ("nowifi".equals(state)) { title = "Wi-Fi is off"; text = ""; }
-        else { title = "Checking…"; text = ""; }
 
         Notification.Builder b = builder(ctx)
                 .setSmallIcon(Checker.iconFor(state))

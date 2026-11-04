@@ -64,10 +64,10 @@ files = {
     "ic_launcher.xml": vector(
         '    <path android:fillColor="#FF1E2A32" android:pathData="M24,2a22,22 0,1 1,0 44a22,22 0,1 1,0 -44z" />\n'
         + group(1.3, (48 - 24 * 1.3) / 2, (48 - 24 * 1.3) / 2), 48, 48),
-    # widget picker preview: dark rounded tile, green fan, label bar
+    # widget picker preview: transparent like the widget — green fan and a label bar
+    # widget picker preview: transparent like the widget — green fan and a label bar
     "widget_preview.xml": vector(
-        '    <path android:fillColor="#99000000" android:pathData="M14,0H58A14,14 0,0 1,72 14V58A14,14 0,0 1,58 72H14A14,14 0,0 1,0 58V14A14,14 0,0 1,14 0z" />\n'
-        + group(1.5, (72 - 24 * 1.5) / 2, 6) + '\n'
+        group(1.5, (72 - 24 * 1.5) / 2, 6) + '\n'
         '    <path android:fillColor="#FFFFFFFF" android:pathData="M27,52h18v3H27z" />', 72, 72),
 }
 for name, xml in files.items():

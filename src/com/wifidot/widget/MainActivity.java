@@ -62,12 +62,18 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     private volatile int loopGen;   // each loop runs only while its generation is current
     private Quality.Result lastQuality;
     private Switch swAlerts, swLock, swWidget, swTile;
-    private TextView batterySub;
+    private TextView batterySub, nameSub;
     private View addWidget, addTile, lockSettings;
     private TextView lockSub;
     private boolean binding;
     private Ndt7 test;
     private android.app.AlertDialog testDialog;
+    private android.widget.Spinner serverPick;
+    private android.widget.ArrayAdapter<String> serverAdapter;
+    private final java.util.List<String> serverSites = new java.util.ArrayList<String>();
+    private volatile String selectedSite;   // null = nearest
+    private boolean serversLoading;
+    private long serversLoadedAt;
 
     private final Runnable ticker = new Runnable() {
         public void run() { updateTime(); updateLink(); handler.postDelayed(this, 1000); }
@@ -104,6 +110,38 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         refresh();
         handler.post(ticker);
         startQualityLoop();
+        loadServers();
+    }
+
+    /** Fill the server list (one small Locate request), at most every 5 minutes, not in Data saver. */
+    private void loadServers() {
+        if (serversLoading || Prefs.dataSaver(this) || test != null
+                || System.currentTimeMillis() - serversLoadedAt < 5 * 60_000L) return;
+        final android.net.Network net = Checker.qualityNetwork(this);
+        if (net == null) return;
+        serversLoading = true;
+        new Thread(new Runnable() { public void run() {
+            java.util.List<Ndt7.Server> list = null;
+            try { list = Ndt7.servers(net); } catch (Throwable ignored) {}
+            final java.util.List<Ndt7.Server> got = list;
+            handler.post(new Runnable() { public void run() {
+                serversLoading = false;
+                if (got == null || got.isEmpty()) return;
+                serversLoadedAt = System.currentTimeMillis();
+                String keep = selectedSite;
+                serverAdapter.clear();
+                serverSites.clear();
+                double nearest = got.get(0).km;
+                serverAdapter.add("Nearest server (automatic)" + (nearest >= 0 ? " · ~" + Math.round(nearest) + " km" : ""));
+                for (int i = 0; i < got.size() && i < 4; i++) {   // five entries at most
+                    serverAdapter.add(got.get(i).label());
+                    serverSites.add(got.get(i).site);
+                }
+                serverAdapter.notifyDataSetChanged();
+                int sel = keep == null ? 0 : serverSites.indexOf(keep) + 1;
+                serverPick.setSelection(Math.max(0, sel));
+            } });
+        } }, "wifidot-servers").start();
     }
 
     @Override
@@ -163,7 +201,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         lp2.leftMargin = px(6);
         pills.addView(pill(R.drawable.ic_ui_refresh, "Check now", new View.OnClickListener() {
             public void onClick(View v) {
-                prefs.edit().putLong("detected2", 0).apply();
+                prefs.edit().putLong("detected3", 0).apply();
                 statusTitle.setText("Checking…");
                 Checker.runAsync(MainActivity.this, null);
             }
@@ -260,6 +298,21 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         // ---- Settings
         col.addView(section("Settings"));
         LinearLayout settings = card(false);
+        nameSub = text("", 13, cSub, false);
+        settings.addView(row(R.drawable.ic_ui_location, "Show Wi-Fi name", nameSub, chevron(),
+                new View.OnClickListener() {
+                    public void onClick(View v) {
+                        if (!WifiDetails.hasLocationPermission(MainActivity.this)) {
+                            requestPermissions(new String[]{WifiDetails.LOCATION,
+                                    "android.permission.ACCESS_COARSE_LOCATION"}, 2);
+                        } else {
+                            try { startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)); }
+                            catch (Throwable e) { openAppSettings(); }
+                        }
+                    }
+                }));
+        settings.addView(divider());
+
         swSaver = new Switch(this);
         saverSub = text("No speed test · quality only on request · checks every 60 s · "
                 + "no router brand lookup", 13, cSub, false);
@@ -323,8 +376,13 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         String host = url.replace("http://", "").replace("/", "");
         if (hs) {
             statusSub.setText(hsOnline ? "Sharing your connection · internet OK" : "No internet to share");
-        } else statusSub.setText("nowifi".equals(state) ? "Connect to a Wi-Fi network"
-                : (host.length() > 0 && !host.equals(label) ? label + " · " + host : label));
+        } else {
+            // "MyWiFi · Starlink · 192.168.100.1" — the network name first, when Android reveals it.
+            String ssid = prefs.getString("ssid", "");
+            String rest = host.length() > 0 && !host.equals(label) ? label + " · " + host : label;
+            statusSub.setText("nowifi".equals(state) ? "Connect to a Wi-Fi network"
+                    : (ssid.length() > 0 ? ssid + " · " : "") + rest);
+        }
         updateTime();
 
         showQuality();
@@ -347,6 +405,11 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         addWidget.setVisibility(Prefs.widget(this) && canPinWidget() ? View.VISIBLE : View.GONE);
         addTile.setVisibility(Prefs.tile(this) && Build.VERSION.SDK_INT >= 33 ? View.VISIBLE : View.GONE);
 
+        boolean perm = WifiDetails.hasLocationPermission(this);
+        String shownName = prefs.getString("ssid", "");
+        nameSub.setText(!perm ? "Android shows the network name only to apps with location access · tap to allow"
+                : shownName.length() > 0 ? "On · " + shownName
+                : "Allowed · also needs Location turned on (tap to open)");
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         batterySub.setText(pm.isIgnoringBatteryOptimizations(getPackageName())
                 ? "Off for WiFi Dot ✓" : "Turn off so background checks keep running");
@@ -473,6 +536,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
                 String key = net == null ? "" : net.toString();
                 if (!key.equals(lastNet)) { QUALITY.reset(); lastNet = key; }   // new network: start over
                 final Quality.Result res = net == null ? null : QUALITY.measure(net);
+                Checker.storeQuality(app, res);   // also shown on the lock screen
                 if (gen != loopGen) break;
                 handler.post(new Runnable() { public void run() { lastQuality = res; showQuality(); } });
                 for (int i = 0; i < 100 && measuring && gen == loopGen; i++) {
@@ -493,6 +557,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
             android.net.Network net = Checker.qualityNetwork(app);
             QUALITY.reset();   // a fresh measurement, not mixed with rounds from earlier taps
             final Quality.Result res = net == null ? null : QUALITY.measure(net);
+            Checker.storeQuality(app, res);
             handler.post(new Runnable() { public void run() {
                 qMeasure.setEnabled(true);
                 qMeasure.setAlpha(1f);
@@ -552,6 +617,23 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         gauges.addView(gDown, g1);
         gauges.addView(gUp, g2);
         box.addView(gauges);
+
+        // Test point: nearest (automatic) or one of up to four nearby servers, with distance.
+        serverPick = new android.widget.Spinner(this);
+        serverAdapter = new android.widget.ArrayAdapter<String>(this,
+                android.R.layout.simple_spinner_item, new java.util.ArrayList<String>());
+        serverAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        serverAdapter.add("Nearest server (automatic)");
+        serverPick.setAdapter(serverAdapter);
+        serverPick.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            public void onItemSelected(android.widget.AdapterView<?> a, View v, int pos, long id) {
+                selectedSite = pos > 0 && pos - 1 < serverSites.size() ? serverSites.get(pos - 1) : null;
+            }
+            public void onNothingSelected(android.widget.AdapterView<?> a) { selectedSite = null; }
+        });
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
+        sp.topMargin = px(4);
+        box.addView(serverPick, sp);
 
         LinearLayout bar = hbox();
         bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -614,7 +696,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         testInfo.setText("");
         gDown.setValue(-1);
         gUp.setValue(-1);
-        test.run(net, new Ndt7.Listener() {
+        test.run(net, selectedSite, new Ndt7.Listener() {
             public void server(final String name) { ui(new Runnable() { public void run() {
                 testServer.setText(name); testInfo.setText("Testing download…"); } }); }
             public void download(final double mbps, final boolean done) { ui(new Runnable() { public void run() {
@@ -646,6 +728,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
         if (gDown == null || test != null) return;
         boolean saver = Prefs.dataSaver(this);
         testPill.setAlpha(saver ? 0.4f : 1f);
+        serverPick.setVisibility(saver ? View.GONE : View.VISIBLE);
         float down = prefs.getFloat("st_down", -1), up = prefs.getFloat("st_up", -1);
         long t = prefs.getLong("st_time", 0), bytes = prefs.getLong("st_bytes", 0);
         gDown.setValue(down > 0 ? down : -1);
@@ -878,7 +961,7 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
-        prefs.edit().putLong("detected2", 0).apply();
+        prefs.edit().putLong("detected3", 0).apply();
         Checker.runAsync(this, null);
         refresh();
     }

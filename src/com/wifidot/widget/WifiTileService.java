@@ -31,8 +31,10 @@ public class WifiTileService extends TileService {
         if (isLocked()) unlockAndRun(go); else go.run();
     }
 
+    /** Tap → the same small menu as the widget: Details / router page (or hotspot settings). */
     private void openPage() {
-        Intent i = new Intent(this, OpenActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        Intent i = new Intent(this, MenuActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         try {
             if (Build.VERSION.SDK_INT >= 34) startActivityAndCollapse(android.app.PendingIntent.getActivity(
                     this, 0, i, android.app.PendingIntent.FLAG_UPDATE_CURRENT | 0x04000000 /* IMMUTABLE */));
