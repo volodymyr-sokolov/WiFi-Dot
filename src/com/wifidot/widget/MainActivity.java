@@ -114,7 +114,11 @@ public class MainActivity extends Activity implements SharedPreferences.OnShared
     }
 
     /** Fill the server list (one small Locate request), at most every 5 minutes, not in Data saver. */
+    private String serversNet = "";
+
     private void loadServers() {
+        String netNow = prefs.getString("net_key", "") + "|" + prefs.getString("state", "");
+        if (!netNow.equals(serversNet)) { serversLoadedAt = 0; serversNet = netNow; }   // new network: new list
         if (serversLoading || Prefs.dataSaver(this) || test != null
                 || System.currentTimeMillis() - serversLoadedAt < 5 * 60_000L) return;
         final android.net.Network net = Checker.qualityNetwork(this);

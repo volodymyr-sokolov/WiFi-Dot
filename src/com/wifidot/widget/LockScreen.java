@@ -122,8 +122,11 @@ final class LockScreen {
         if ("hotspot".equals(state)) {
             // Hotspot: only its name (hidden if the phone doesn't reveal it).
             String name = p.getString("hs_name", "");
+            boolean noNet = "offline".equals(p.getString("hs_net", ""));
             title = "Hotspot on";
-            text = name;
+            // Its name where the phone reveals it; the "no internet" warning always stays.
+            text = name.length() > 0 ? (noNet ? name + " · No internet to share" : name)
+                    : (noNet ? "No internet to share" : "Sharing your connection");
         } else {
             title = "online".equals(state) ? "Internet OK" : "offline".equals(state) ? "No internet"
                     : "nowifi".equals(state) ? "Wi-Fi is off" : "Checking…";
@@ -137,7 +140,8 @@ final class LockScreen {
                 if (bars >= 0) parts.add("Signal " + bars + "/4 (" + rssi + " dBm)");
                 long qAt = p.getLong("q_at", -1);
                 long age = Clock.now() - qAt;
-                if (qAt >= 0 && age >= 0 && age < 10 * 60_000L && "online".equals(state)) {
+                boolean sameNet = p.getString("q_net", "").equals(p.getString("net_key", "-"));
+                if (qAt >= 0 && age >= 0 && age < 10 * 60_000L && "online".equals(state) && sameNet) {
                     parts.add("Quality " + p.getInt("q_score", 0) + "/100");
                 }
                 text = android.text.TextUtils.join(" · ", parts);

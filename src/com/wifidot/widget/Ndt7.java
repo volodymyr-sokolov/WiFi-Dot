@@ -117,7 +117,9 @@ final class Ndt7 {
             Located loc;
             try { loc = locate(net, site); } catch (IOException e) { if (site == null) throw e; loc = locate(net, null); }
             JSONObject target = loc.results.getJSONObject(0);
-            l.server("M-Lab · " + server(target, loc.client).label());
+            Server chosen = server(target, loc.client);
+            boolean fellBack = site != null && !site.equals(chosen.site);
+            l.server("M-Lab · " + chosen.label() + (fellBack ? " (chosen server not available, used nearest)" : ""));
             JSONObject urls = target.getJSONObject("urls");
             if (!cancel) down = download(net, urls.getString("wss:///ndt/v7/download"), l);
             if (!cancel) up = upload(net, urls.getString("wss:///ndt/v7/upload"), l);

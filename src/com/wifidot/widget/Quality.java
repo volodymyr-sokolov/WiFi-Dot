@@ -63,23 +63,34 @@ final class Quality {
 
     synchronized void reset() { window.clear(); }
 
-    private List<Double> burst(Network net, String host) {
+    /** Background variant: same resolver only (no retry), 10 packets, short timeout — ≤ ~3 s. */
+    synchronized Result measureQuick(Network net) {
+        if (net == null) return new Result(0, 0, 0, 0, 0, 0, 0, "");
+        List<Double> round = burst(net, RESOLVERS[resolver], 10, 250);
+        window.addAll(round);
+        while (window.size() > WINDOW) window.remove(0);
+        return evaluate(window, RESOLVERS[resolver]);
+    }
+
+    private List<Double> burst(Network net, String host) { return burst(net, host, BURST, TIMEOUT_MS); }
+
+    private List<Double> burst(Network net, String host, int count, int timeoutMs) {
         List<Double> out = new ArrayList<Double>();
         DatagramSocket sock = null;
         try {
             sock = new DatagramSocket();
             net.bindSocket(sock);
             InetAddress dst = InetAddress.getByName(host);   // numeric: no DNS lookup
-            sock.setSoTimeout(TIMEOUT_MS);
+            sock.setSoTimeout(timeoutMs);
             byte[] buf = new byte[512];
-            for (int i = -1; i < BURST; i++) {   // i = -1: untimed warm-up (Wi-Fi power save may drop it)
+            for (int i = -1; i < count; i++) {   // i = -1: untimed warm-up (Wi-Fi power save may drop it)
                 int id = rnd.nextInt(0xFFFF);
                 byte[] q = query(id);
                 long t0 = System.nanoTime();
                 double rtt = -1;
                 try {
                     sock.send(new DatagramPacket(q, q.length, dst, 53));
-                    long deadline = t0 + TIMEOUT_MS * 1_000_000L;
+                    long deadline = t0 + timeoutMs * 1_000_000L;
                     while (true) {
                         long left = (deadline - System.nanoTime()) / 1_000_000L;
                         if (left <= 0) break;
@@ -105,7 +116,7 @@ final class Quality {
             }
         } catch (Throwable e) {
             // socket could not be created/bound: report the round as lost
-            while (out.size() < BURST) out.add(-1.0);
+            while (out.size() < count) out.add(-1.0);
         } finally {
             if (sock != null) sock.close();
         }

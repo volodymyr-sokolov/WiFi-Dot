@@ -5,7 +5,7 @@ Built with Starlink in mind: one tap opens the dish status page.
 
 ![Icons](docs/icons.png)
 
-**[Download WiFiDot.apk (v3.7)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
+**[Download WiFiDot.apk (v3.8)](https://github.com/volodymyr-sokolov/wifi-dot/raw/main/release/WiFiDot.apk)**. Open it on the phone and allow installing from unknown sources.
 
 | Icon | Meaning |
 |------|---------|
@@ -23,11 +23,18 @@ Each can be turned on or off in the app (all on by default):
   - There is no "No internet" in the first 20 s after Wi-Fi connects.
   - Pop-ups are at least 30 s apart, and each status gets a fresh notification, so mixed icons can't appear.
   - Never twice for the same status, never while the phone's hotspot is on, and never together with the lock-screen card.
-- **Lock screen** (off by default): a status card like the widget, with the coloured icon and e.g. "Internet OK · Starlink". It's a regular notification that never makes a sound, never pops up and never wakes the screen. It exists only while the phone is locked and is removed as soon as you unlock. If it doesn't appear, use the **Settings** button next to the switch to allow WiFi Dot notifications on the lock screen. Most phones don't let ordinary apps put widgets on the lock screen. On phones that do, the widget itself can also be placed there.
-- **Home screen widget**: the icon in its colour, with the router name. Tap it for a small menu with **Details** (opens the app) and **Router main page**, or **Hotspot settings** while the hotspot is on.
-- **Quick Settings tile**: "Wi-Fi Internet". Tap it to open the router page.
+- **Lock screen** (off by default): a status card like the widget, with the coloured icon, e.g. "Internet OK · MyWiFi" / "Starlink · Signal 3/4 (−62 dBm) · Quality 94/100". Each part appears only if known. The quality figure is measured quietly while the card is showing, at most every 3 min, and not in Data saver. With the hotspot on it shows "Hotspot on" with the hotspot's name where the phone reveals it, and a warning if there's no internet to share. It's a regular notification that never makes a sound, never pops up and never wakes the screen. It exists only while the phone is locked and is removed as soon as you unlock. If it doesn't appear, use the **Settings** button next to the switch to allow WiFi Dot notifications on the lock screen. Most phones don't let ordinary apps put widgets on the lock screen. On phones that do, the widget itself can also be placed there.
+- **Home screen widget**: transparent, with the icon in its colour and the router name. The label is light or dark depending on the wallpaper, with a soft shadow. Tap it for a small menu showing "MyWiFi · Starlink", with **Details** (opens the app) and **Router main page**, or **Hotspot settings** while the hotspot is on.
+- **Quick Settings tile**: "Wi-Fi Internet". Tap it for the same menu.
 
-**Starlink** opens `http://192.168.100.1`. Other routers open their gateway address. TP-Link, Keenetic, ASUS, MikroTik, Xiaomi and others are recognised by name.
+**Wi-Fi name**: Android shows the network name only to apps with location access, and with Location turned on. Allow it under **Settings → Show Wi-Fi name**. It's optional; without it the name is simply hidden.
+
+**Starlink** opens `http://192.168.100.1`. Other routers open their gateway address. The router brand is recognised in two steps.
+
+1. **The router's own local name.** For example, `fritz.box` answering with the gateway's address means FRITZ!Box. Names that exist only in a home network are trusted outright. Internet domains that publicly point to private addresses (like `tplinkwifi.net`) count only if the router's page doesn't clearly show another brand. If the router answers any name at all, this step is skipped.
+2. **Otherwise, the router's page.** The title and server headers weigh much more than the page text, and only whole words count.
+
+This fixed a FRITZ!Box being shown as "D-Link".
 
 Apart from the pop-up alerts and the optional lock-screen card, the app shows no notifications and no icon next to the clock. The system's own Wi-Fi and hotspot indicators cover that.
 
@@ -42,6 +49,7 @@ The main screen shows:
   - Packet loss above 1% caps the rating at 2 ("Bad"), and 10% or more makes it 1 ("Very bad"), however low the ping. A single lost packet is treated as noise, so it takes at least 2.
 - **Speed test** by [M-Lab ndt7](https://www.measurementlab.net/tests/ndt/ndt7/): two speedometers (Download and Upload, non-linear scale 0–1000 Mbit/s) under Connection quality.
   - Tap **Start**. Before every test the app shows how much data it will use: about 10 s download plus 10 s upload at full speed. That's roughly 100–300 MB on a typical Starlink connection and up to about 1.3 GB on a 1 Gbit/s line. After a test it uses your last speeds to estimate. Afterwards it shows the data actually used.
+  - **Server**: a drop-down with "Nearest server (automatic)" and up to four nearby servers (five entries at most), each with its distance, e.g. "Frankfurt, DE (fra05) · ~435 km". The distance comes from your approximate position (from M-Lab's server lookup, no location permission needed) and the server site's airport code. It's hidden if unknown. If a chosen server isn't available, the nearest one is used and the app says so.
   - It finds the nearest M-Lab server with the Locate API v2 and connects over a WebSocket (`net.measurementlab.ndt.v7`), bound to the Wi-Fi (or, with the hotspot on, the shared connection).
   - Download speed comes from what actually arrived; upload speed comes from the server's own count. **Stop** ends a test at once, even on a stalled connection.
 

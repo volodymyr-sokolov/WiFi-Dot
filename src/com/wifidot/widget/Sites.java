@@ -73,19 +73,24 @@ final class Sites {
     /** [lat, lon] for a site like "fra05" or a machine like "mlab1-fra05.mlab-oti…", or null. */
     static double[] coords(String siteOrMachine) {
         if (siteOrMachine == null) return null;
-        String s = siteOrMachine.toLowerCase(java.util.Locale.ROOT);
-        int dash = s.indexOf('-');
-        if (s.startsWith("mlab") && dash > 0) s = s.substring(dash + 1);
-        if (s.length() < 3) return null;
-        return AIRPORTS.get(s.substring(0, 3));
+        String first = siteOrMachine.toLowerCase(java.util.Locale.ROOT).split("\\.")[0];
+        // "mlab1-fra05" → "fra05"; other formats: the first part that starts with a known airport code
+        for (String part : first.split("-")) {
+            if (part.length() >= 3 && !part.startsWith("mlab")) {
+                double[] c = AIRPORTS.get(part.substring(0, 3));
+                if (c != null) return c;
+            }
+        }
+        return null;
     }
 
     /** Site code ("fra05") from a machine name ("mlab1-fra05.mlab-oti.measurement-lab.org"). */
     static String site(String machine) {
         if (machine == null) return "";
-        String s = machine.split("\\.")[0];
-        int dash = s.indexOf('-');
-        return dash > 0 ? s.substring(dash + 1) : s;
+        String s = machine.toLowerCase(java.util.Locale.ROOT).split("\\.")[0];
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^mlab\\d+-([a-z]{3}\\d+)$").matcher(s);
+        if (m.find()) return m.group(1);   // classic M-Lab machine: mlab1-fra05
+        return s;                         // other formats: keep the whole first label
     }
 
     /** Great-circle distance in km. */

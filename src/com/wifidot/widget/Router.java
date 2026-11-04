@@ -27,21 +27,28 @@ import java.util.regex.Pattern;
 final class Router {
     private Router() {}
 
+    /**
+     * {name, brand, trusted}. "trusted" names exist only inside the router's own network
+     * (fritz.box, speedport.ip, …). The others are real internet domains: some of them publicly
+     * point to a private address such as 192.168.0.1 (e.g. tplinkwifi.net), so ANY router at that
+     * address would match — those need the router's page not to point to another brand.
+     */
     private static final String[][] LOCAL_NAMES = {
-            {"fritz.box", "FRITZ!Box"},
-            {"router.asus.com", "ASUS"},
-            {"tplinkwifi.net", "TP-Link"}, {"tplinklogin.net", "TP-Link"},
-            {"my.keenetic.net", "Keenetic"},
-            {"routerlogin.net", "Netgear"},
-            {"miwifi.com", "Xiaomi"}, {"router.miwifi.com", "Xiaomi"},
-            {"tendawifi.com", "Tenda"},
-            {"mwlogin.net", "Mercusys"},
-            {"dlinkrouter.local", "D-Link"}, {"dlinkrouter", "D-Link"},
-            {"speedport.ip", "Speedport"},
-            {"easy.box", "Vodafone EasyBox"},
-            {"router.huawei.com", "Huawei"}, {"homerouter.cpe", "Huawei"},
-            {"myrouter.local", "Linksys"},
-            {"openwrt.lan", "OpenWrt"},
+            {"fritz.box", "FRITZ!Box", "trusted"},
+            {"speedport.ip", "Speedport", "trusted"},
+            {"easy.box", "Vodafone EasyBox", "trusted"},
+            {"dlinkrouter.local", "D-Link", "trusted"}, {"dlinkrouter", "D-Link", "trusted"},
+            {"homerouter.cpe", "Huawei", "trusted"},
+            {"myrouter.local", "Linksys", "trusted"},
+            {"openwrt.lan", "OpenWrt", "trusted"},
+            {"router.asus.com", "ASUS", ""},
+            {"tplinkwifi.net", "TP-Link", ""}, {"tplinklogin.net", "TP-Link", ""},
+            {"my.keenetic.net", "Keenetic", ""},
+            {"routerlogin.net", "Netgear", ""},
+            {"miwifi.com", "Xiaomi", ""}, {"router.miwifi.com", "Xiaomi", ""},
+            {"tendawifi.com", "Tenda", ""},
+            {"mwlogin.net", "Mercusys", ""},
+            {"router.huawei.com", "Huawei", ""},
     };
 
     /** {regex (whole words), brand}. Checked on title/headers (weight 5) and body (weight 1). */
@@ -77,25 +84,42 @@ final class Router {
 
     /** Brand of the router at {@code gateway}, or null. Takes up to ~4 s. */
     static String detect(Network net, String gateway) {
-        String byName = byLocalName(net, gateway);
-        if (byName != null) return byName;
-        return byPage(net, "http://" + gateway + "/");
+        String[] byName = byLocalName(net, gateway);   // {brand, trusted?}
+        if (byName != null && "trusted".equals(byName[1])) return byName[0];
+        String[] page = fetch(net, "http://" + gateway + "/");
+        String pageBrand = page == null ? null : score(page[0], page[1]);
+        int pageStrength = page == null || pageBrand == null ? 0 : strength(pageBrand, page[0], page[1]);
+        if (byName != null) {
+            // A public-domain name matched: believe it unless the page clearly says otherwise.
+            return pageBrand != null && !pageBrand.equals(byName[0]) && pageStrength >= 5 ? pageBrand : byName[0];
+        }
+        return pageBrand;
+    }
+
+    /** Score of one brand (to judge how clear the page's evidence is). */
+    private static int strength(String brand, String strong, String body) {
+        int sc = 0;
+        for (String[] s : SIGNS) if (s[1].equals(brand)) {
+            Pattern pat = Pattern.compile(s[0]);
+            sc += 5 * Math.min(3, count(pat, strong)) + Math.min(10, count(pat, body));
+        }
+        return sc;
     }
 
     // ------------------------------------------------------------------ 1. local names
 
-    static String byLocalName(final Network net, final String gateway) {
+    static String[] byLocalName(final Network net, final String gateway) {
         if (gateway == null) return null;
-        final String[] found = {null};
+        final int[] found = {-1};
         final boolean[] wildcard = {false};
         Thread[] ts = new Thread[LOCAL_NAMES.length + 1];
         for (int i = 0; i < LOCAL_NAMES.length; i++) {
-            final String host = LOCAL_NAMES[i][0], brand = LOCAL_NAMES[i][1];
+            final String host = LOCAL_NAMES[i][0];
             final int order = i;
             ts[i] = new Thread(new Runnable() { public void run() {
                 if (resolvesTo(net, host, gateway)) synchronized (found) {
-                    // keep the earliest list entry if several match
-                    if (found[0] == null || indexOf(found[0]) > order) found[0] = brand;
+                    // keep the earliest (most trusted) list entry if several match
+                    if (found[0] < 0 || found[0] > order) found[0] = order;
                 }
             } });
         }
@@ -109,12 +133,10 @@ final class Router {
             long left = deadline - System.currentTimeMillis();
             if (left > 0) try { t.join(left); } catch (InterruptedException ignored) {}
         }
-        synchronized (found) { return wildcard[0] ? null : found[0]; }
-    }
-
-    private static int indexOf(String brand) {
-        for (int i = 0; i < LOCAL_NAMES.length; i++) if (LOCAL_NAMES[i][1].equals(brand)) return i;
-        return Integer.MAX_VALUE;
+        synchronized (found) {
+            if (wildcard[0] || found[0] < 0) return null;
+            return new String[]{LOCAL_NAMES[found[0]][1], LOCAL_NAMES[found[0]][2]};
+        }
     }
 
     private static boolean resolvesTo(Network net, String host, String ip) {

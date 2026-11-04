@@ -202,10 +202,13 @@ public final class Checker {
             hsName = h == null ? "" : h;
         } else if (wifi != null) {
             String n = WifiDetails.ssid(ctx);
-            ssid = n == null ? "" : n;
+            // Android may hide the name from background checks ("while using the app" location):
+            // keep the last known name as long as we're on the same network.
+            ssid = n != null ? n : netKey.equals(p.getString("net_key", "")) ? p.getString("ssid", "") : "";
             rssi = WifiDetails.rssi(ctx);
         }
-        boolean changed = !state.equals(prevState)
+        boolean wpLight = lightWallpaper(ctx);
+        boolean changed = !state.equals(prevState) || wpLight != p.getBoolean("wp_light", false)
                 || !ssid.equals(p.getString("ssid", "")) || !hsName.equals(p.getString("hs_name", ""))
                 || !hsNet.equals(p.getString("hs_net", ""))
                 || !label.equals(p.getString("label", ""))
@@ -214,6 +217,7 @@ public final class Checker {
                 .putString("gw", gw).putString("net_key", netKey).putString("hs_net", hsNet)
                 .putBoolean("wifi_validated", wifiValidated)
                 .putString("ssid", ssid).putString("hs_name", hsName).putInt("rssi", rssi)
+                .putBoolean("wp_light", wpLight)
                 .putLong("latency", "online".equals(state) || "online".equals(hsNet) ? lastLatencyMs : -1)
                 .putLong("time", System.currentTimeMillis()).apply();
         // Only a real measurement renews "recent": a kept/assumed result must age out after 2 min.
@@ -223,26 +227,47 @@ public final class Checker {
             render(ctx);
         }
         // Lock-screen card first (so an unlocked phone never shows it next to an alert), then alerts.
-        // Quality for the lock-screen card: one light round (15 tiny packets) per check, only when
-        // the card is on, Data saver is off and there is internet to measure.
+        // Quality for the lock-screen card: a quick round on its own thread (never slows this check),
+        // only while the card is actually showing, Data saver is off and Wi-Fi has internet; ≥3 min apart.
         try {
-            if (LockScreen.enabled(ctx) && !Prefs.dataSaver(ctx)
-                    && ("online".equals(state) || "online".equals(hsNet))) {
-                Network qn = qualityNetwork(ctx);
-                if (qn != null) storeQuality(ctx, BG_QUALITY.measure(qn));
-            }
+            if ("online".equals(state) && LockScreen.isShowing(ctx) && !Prefs.dataSaver(ctx)) bgQuality(ctx, netKey);
         } catch (Throwable ignored) {}
         try { LockScreen.update(ctx); } catch (Throwable ignored) {}
         try { Alerts.afterCheck(ctx); } catch (Throwable ignored) {}
     }
 
     private static final Quality BG_QUALITY = new Quality();
+    private static final java.util.concurrent.atomic.AtomicBoolean bgQualityRunning =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static String bgQualityNet = "";
+    private static long bgQualityAt = -1;
 
-    /** Remember the latest quality result (shown on the lock screen while fresh). */
+    private static void bgQuality(final Context ctx, final String key) {
+        long now = Clock.now();
+        if (bgQualityAt >= 0 && now - bgQualityAt < 3 * 60_000L && key.equals(bgQualityNet)) return;
+        if (!bgQualityRunning.compareAndSet(false, true)) return;
+        new Thread(new Runnable() { public void run() {
+            try {
+                if (!key.equals(bgQualityNet)) { BG_QUALITY.reset(); bgQualityNet = key; }   // new network
+                bgQualityAt = Clock.now();
+                Network qn = qualityNetwork(ctx);
+                if (qn != null) storeQuality(ctx, BG_QUALITY.measureQuick(qn), key);
+            } catch (Throwable ignored) {
+            } finally {
+                bgQualityRunning.set(false);
+            }
+        } }, "wifidot-bg-quality").start();
+    }
+
+    /** Remember the latest quality result with its network (the lock card shows it while fresh). */
     static void storeQuality(Context ctx, Quality.Result r) {
+        storeQuality(ctx, r, ctx.getSharedPreferences(PREFS, 0).getString("net_key", ""));
+    }
+
+    static void storeQuality(Context ctx, Quality.Result r, String netKey) {
         if (r == null || r.sent == 0 || r.level == 0) return;
         ctx.getSharedPreferences(PREFS, 0).edit().putInt("q_score", r.score).putInt("q_level", r.level)
-                .putLong("q_at", Clock.now()).apply();
+                .putLong("q_at", Clock.now()).putString("q_net", netKey).apply();
     }
 
     /**
